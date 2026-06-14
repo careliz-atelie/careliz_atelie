@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { supabase } from '../lib/supabase';
 import { Sparkles, MessageCircle, Calendar, ArrowRight, ArrowLeft } from 'lucide-react';
 
 interface QualifyFormProps {
@@ -12,32 +13,84 @@ interface QualifyFormProps {
   onNavigateToLogin: () => void;
 }
 
+interface DBService {
+  id: string;
+  garment_type: string;
+  service_name: string;
+  base_price: number;
+}
+
 export default function QualifyForm({ onQualified, onNavigateToLogin }: QualifyFormProps) {
   const [step, setStep] = useState(1);
-  const [serviceType, setServiceType] = useState('');
+  const [loading, setLoading] = useState(true);
+  
+  // Lista de peças e serviços vindos do Supabase
+  const [dbGarments, setDbGarments] = useState<string[]>([]);
+  const [dbServices, setDbServices] = useState<DBService[]>([]);
+
+  // Seleções do usuário
+  const [serviceType, setServiceType] = useState(''); // Peça (garment_type)
+  const [selectedServiceId, setSelectedServiceId] = useState(''); // ID do Serviço específico
   const [qtyRange, setQtyRange] = useState('');
   const [urgency, setUrgency] = useState('');
   const [hasFabric, setHasFabric] = useState('');
 
-  const calculateBudget = () => {
-    let basePrice = 0;
-    switch (serviceType) {
-      case 'Ajuste de Roupa':
-        basePrice = 50;
-        break;
-      case 'Confecção sob Medida':
-        basePrice = 300;
-        break;
-      case 'Reforma de Vestido de Festa':
-        basePrice = 180;
-        break;
-      case 'Conserto Geral':
-        basePrice = 30;
-        break;
-      default:
-        basePrice = 0;
+  // 1. Carrega as peças únicas (garment_type) do Supabase no início
+  useEffect(() => {
+    async function loadGarments() {
+      setLoading(true);
+      try {
+        const { data, error } = await supabase
+          .from('services')
+          .select('garment_type');
+
+        if (error) throw error;
+
+        // Extrair tipos únicos
+        const uniqueGarments = Array.from(new Set(data?.map(item => item.garment_type) || []));
+        setDbGarments(uniqueGarments);
+      } catch (err) {
+        console.error('Erro ao carregar tipos de roupas:', err);
+      } finally {
+        setLoading(false);
+      }
+    }
+    loadGarments();
+  }, []);
+
+  // 2. Carrega os serviços específicos quando a peça (garment_type) é selecionada
+  useEffect(() => {
+    if (!serviceType) {
+      setDbServices([]);
+      setSelectedServiceId('');
+      return;
     }
 
+    async function loadServices() {
+      try {
+        const { data, error } = await supabase
+          .from('services')
+          .select('*')
+          .eq('garment_type', serviceType);
+
+        if (error) throw error;
+        setDbServices(data || []);
+        setSelectedServiceId(''); // Reseta seleção do serviço
+      } catch (err) {
+        console.error('Erro ao carregar serviços da peça:', err);
+      }
+    }
+    loadServices();
+  }, [serviceType]);
+
+  // Encontra o serviço selecionado atualmente
+  const currentService = dbServices.find(s => s.id === selectedServiceId);
+
+  // Lógica de cálculo de orçamento estimado com base no preço real do banco
+  const calculateBudget = () => {
+    if (!currentService) return 0;
+    
+    const basePrice = Number(currentService.base_price);
     let qtyMultiplier = 1;
     if (qtyRange === '2 a 3 peças') qtyMultiplier = 2;
     if (qtyRange === 'Mais de 3 peças') qtyMultiplier = 3.5;
@@ -53,12 +106,14 @@ export default function QualifyForm({ onQualified, onNavigateToLogin }: QualifyF
   const priceMin = Math.round(priceEstimate * 0.9 / 5) * 5;
   const priceMax = Math.round(priceEstimate * 1.25 / 5) * 5;
 
+  // Se for serviço premium (ex: Vestido de Festa) sugere visita presencial
   const isQualifiedForVisit = 
-    serviceType === 'Confecção sob Medida' || 
-    serviceType === 'Reforma de Vestido de Festa';
+    serviceType.toLowerCase().includes('festa') || 
+    serviceType.toLowerCase().includes('noiva') ||
+    serviceType.toLowerCase().includes('medida');
 
   const handleNext = () => {
-    if (step < 4) setStep(step + 1);
+    if (step < 5) setStep(step + 1);
   };
 
   const handleBack = () => {
@@ -68,7 +123,8 @@ export default function QualifyForm({ onQualified, onNavigateToLogin }: QualifyF
   const handleWhatsAppRedirect = () => {
     const phoneNumber = '5511999999999'; // Substituir pelo número real
     const message = `Olá! Realizei a simulação no site. 
-- *Serviço*: ${serviceType}
+- *Peça*: ${serviceType}
+- *Serviço*: ${currentService?.service_name || 'Personalizado'}
 - *Quantidade*: ${qtyRange}
 - *Urgência*: ${urgency}
 - *Tecido*: ${hasFabric}
@@ -80,7 +136,7 @@ Gostaria de tirar algumas dúvidas!`;
 
   const handleProceedToSchedule = () => {
     onQualified({
-      serviceType,
+      serviceType: `${serviceType} - ${currentService?.service_name || ''}`,
       qtyRange,
       urgency,
       hasFabric,
@@ -123,40 +179,78 @@ Gostaria de tirar algumas dúvidas!`;
           <div style={{ 
             height: '100%', 
             background: 'var(--pink-primary)', 
-            width: `${(step / 4) * 100}%`,
+            width: `${(step / 5) * 100}%`,
             transition: 'width 0.4s cubic-bezier(0.16, 1, 0.3, 1)' 
           }} />
         </div>
 
         <div style={{ marginTop: '16px' }} className="animate-fade-in">
-          {/* ETAPA 1: TIPO DE SERVIÇO */}
+          {/* ETAPA 1: SELECIONAR A ROUPA */}
           {step === 1 && (
             <div>
-              <h2 style={{ marginBottom: '8px' }}>Que tipo de serviço você precisa?</h2>
-              <p style={{ marginBottom: '28px' }}>Selecione a melhor opção correspondente ao seu caso.</p>
+              <h2 style={{ marginBottom: '8px' }}>Que tipo de roupa deseja trazer?</h2>
+              <p style={{ marginBottom: '28px' }}>Selecione uma das opções cadastradas abaixo.</p>
+              
+              {loading ? (
+                <p style={{ color: 'var(--text-muted)' }}>Carregando opções do ateliê...</p>
+              ) : dbGarments.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: '20px' }}>
+                  <p style={{ color: 'var(--text-muted)', marginBottom: '16px' }}>Nenhum serviço cadastrado ainda no Supabase.</p>
+                  <p style={{ fontSize: '0.85rem', color: 'var(--pink-primary)' }}>Cadastre peças e preços no Painel Administrativo!</p>
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                  {dbGarments.map((garment) => (
+                    <label 
+                      key={garment} 
+                      className={`option-select ${serviceType === garment ? 'active' : ''}`}
+                    >
+                      <input 
+                        type="radio" 
+                        name="serviceType" 
+                        value={garment} 
+                        checked={serviceType === garment}
+                        onChange={() => setServiceType(garment)}
+                      />
+                      {garment}
+                    </label>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ETAPA 2: SELECIONAR O SERVIÇO */}
+          {step === 2 && (
+            <div>
+              <h2 style={{ marginBottom: '8px' }}>Qual ajuste/serviço necessário para esta peça?</h2>
+              <p style={{ marginBottom: '28px' }}>Escolha o serviço correspondente para calcularmos o orçamento.</p>
               
               <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                {['Ajuste de Roupa', 'Confecção sob Medida', 'Reforma de Vestido de Festa', 'Conserto Geral'].map((type) => (
+                {dbServices.map((service) => (
                   <label 
-                    key={type} 
-                    className={`option-select ${serviceType === type ? 'active' : ''}`}
+                    key={service.id} 
+                    className={`option-select ${selectedServiceId === service.id ? 'active' : ''}`}
                   >
                     <input 
                       type="radio" 
-                      name="serviceType" 
-                      value={type} 
-                      checked={serviceType === type}
-                      onChange={() => setServiceType(type)}
+                      name="selectedServiceId" 
+                      value={service.id} 
+                      checked={selectedServiceId === service.id}
+                      onChange={() => setSelectedServiceId(service.id)}
                     />
-                    {type}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%', alignItems: 'center' }}>
+                      <span>{service.service_name}</span>
+                      <span style={{ fontSize: '0.9rem', color: 'var(--text-muted)' }}>Preço base: R$ {service.base_price}</span>
+                    </div>
                   </label>
                 ))}
               </div>
             </div>
           )}
 
-          {/* ETAPA 2: QUANTIDADE */}
-          {step === 2 && (
+          {/* ETAPA 3: QUANTIDADE */}
+          {step === 3 && (
             <div>
               <h2 style={{ marginBottom: '8px' }}>Quantas peças você deseja trazer?</h2>
               <p style={{ marginBottom: '28px' }}>Isso nos ajuda a estimar o tempo necessário de atendimento.</p>
@@ -181,8 +275,8 @@ Gostaria de tirar algumas dúvidas!`;
             </div>
           )}
 
-          {/* ETAPA 3: URGÊNCIA */}
-          {step === 3 && (
+          {/* ETAPA 4: URGÊNCIA */}
+          {step === 4 && (
             <div>
               <h2 style={{ marginBottom: '8px' }}>Qual o prazo ideal para você?</h2>
               <p style={{ marginBottom: '28px' }}>Para prazos curtos, pode ser aplicada uma taxa de urgência.</p>
@@ -207,8 +301,8 @@ Gostaria de tirar algumas dúvidas!`;
             </div>
           )}
 
-          {/* ETAPA 4: ORÇAMENTO E REDIRECIONAMENTO */}
-          {step === 4 && (
+          {/* ETAPA 5: ORÇAMENTO E REDIRECIONAMENTO */}
+          {step === 5 && (
             <div>
               <h2 style={{ marginBottom: '8px' }}>Você já possui o tecido ou material?</h2>
               <p style={{ marginBottom: '28px' }}>Último detalhe para definirmos seu orçamento médio.</p>
@@ -231,7 +325,7 @@ Gostaria de tirar algumas dúvidas!`;
                 ))}
               </div>
 
-              {hasFabric && (
+              {hasFabric && currentService && (
                 <div 
                   className="animate-fade-up"
                   style={{ 
@@ -299,7 +393,7 @@ Gostaria de tirar algumas dúvidas!`;
         </div>
 
         {/* Rodapé de Navegação */}
-        {step < 4 && (
+        {step < 5 && (
           <div style={{ 
             display: 'flex', 
             justifyContent: 'space-between', 
@@ -322,8 +416,9 @@ Gostaria de tirar algumas dúvidas!`;
               onClick={handleNext}
               disabled={
                 (step === 1 && !serviceType) ||
-                (step === 2 && !qtyRange) ||
-                (step === 3 && !urgency)
+                (step === 2 && !selectedServiceId) ||
+                (step === 3 && !qtyRange) ||
+                (step === 4 && !urgency)
               }
               className="btn-primary"
               style={{ width: 'auto', display: 'flex', alignItems: 'center', gap: '8px' }}
