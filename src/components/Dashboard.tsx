@@ -1,6 +1,6 @@
 import { useState, useEffect, type FormEvent } from 'react';
 import { supabase } from '../lib/supabase';
-import { LogOut, Calendar, Clock, Check, X, ShieldAlert, Trash2, Sliders, Phone, Scissors, Plus, Edit2, Save } from 'lucide-react';
+import { LogOut, Calendar, Clock, Check, X, ShieldAlert, Trash2, Sliders, Phone, Scissors, Plus, Edit2, Save, Settings } from 'lucide-react';
 
 interface Appointment {
   id: string;
@@ -28,12 +28,22 @@ interface DBService {
   base_price: number;
 }
 
+interface BusinessHours {
+  id: number;
+  day_name: string;
+  is_open: boolean;
+  open_time: string;
+  close_time: string;
+  production_start: string;
+  production_end: string;
+}
+
 interface DashboardProps {
   onLogout: () => void;
 }
 
 export default function Dashboard({ onLogout }: DashboardProps) {
-  const [activeTab, setActiveTab] = useState<'agenda' | 'servicos'>('agenda');
+  const [activeTab, setActiveTab] = useState<'agenda' | 'servicos' | 'horarios'>('agenda');
 
   // Dados da Agenda
   const [appointments, setAppointments] = useState<Appointment[]>([]);
@@ -56,6 +66,10 @@ export default function Dashboard({ onLogout }: DashboardProps) {
   const [editBasePrice, setEditBasePrice] = useState('');
   const [isSavingEdit, setIsSavingEdit] = useState(false);
 
+  // Dados de Funcionamento Semanais (Atendimento vs Produção)
+  const [weeklyHours, setWeeklyHours] = useState<BusinessHours[]>([]);
+  const [isSavingHours, setIsSavingHours] = useState(false);
+
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -65,7 +79,7 @@ export default function Dashboard({ onLogout }: DashboardProps) {
   async function loadDashboardData() {
     setLoading(true);
     try {
-      // 1. Busca todos os agendamentos
+      // 1. Agendamentos
       const { data: apps, error: appsErr } = await supabase
         .from('appointments')
         .select('*')
@@ -75,7 +89,7 @@ export default function Dashboard({ onLogout }: DashboardProps) {
       if (appsErr) throw appsErr;
       setAppointments(apps || []);
 
-      // 2. Busca todos os bloqueios ativos
+      // 2. Bloqueios pontuais
       const { data: blocks, error: blocksErr } = await supabase
         .from('blocked_slots')
         .select('*')
@@ -84,7 +98,7 @@ export default function Dashboard({ onLogout }: DashboardProps) {
       if (blocksErr) throw blocksErr;
       setBlockedSlots(blocks || []);
 
-      // 3. Busca os serviços cadastrados
+      // 3. Serviços cadastrados
       const { data: servs, error: servsErr } = await supabase
         .from('services')
         .select('*')
@@ -93,6 +107,15 @@ export default function Dashboard({ onLogout }: DashboardProps) {
 
       if (servsErr) throw servsErr;
       setServices(servs || []);
+
+      // 4. Horários de funcionamento semanais
+      const { data: hours, error: hoursErr } = await supabase
+        .from('business_hours')
+        .select('*')
+        .order('id', { ascending: true });
+
+      if (hoursErr) throw hoursErr;
+      setWeeklyHours(hours || []);
     } catch (err) {
       console.error('Erro ao carregar dados do dashboard:', err);
     } finally {
@@ -257,6 +280,42 @@ export default function Dashboard({ onLogout }: DashboardProps) {
     }
   };
 
+  // Atualizar Horários Semanais da Costureira
+  const handleUpdateWeeklyHours = async (e: FormEvent) => {
+    e.preventDefault();
+    setIsSavingHours(true);
+
+    try {
+      for (const day of weeklyHours) {
+        const { error } = await supabase
+          .from('business_hours')
+          .update({
+            is_open: day.is_open,
+            open_time: day.open_time,
+            close_time: day.close_time,
+            production_start: day.production_start,
+            production_end: day.production_end
+          })
+          .eq('id', day.id);
+
+        if (error) throw error;
+      }
+      alert('Configurações de atendimento e produção atualizadas com sucesso!');
+      loadDashboardData();
+    } catch (err) {
+      console.error('Erro ao atualizar horários semanais:', err);
+      alert('Não foi possível atualizar as configurações de horários.');
+    } finally {
+      setIsSavingHours(false);
+    }
+  };
+
+  const handleWeeklyHoursChange = (id: number, field: keyof BusinessHours, value: any) => {
+    setWeeklyHours(prev =>
+      prev.map(day => (day.id === id ? { ...day, [field]: value } : day))
+    );
+  };
+
   const handleSignOut = async () => {
     await supabase.auth.signOut();
     onLogout();
@@ -288,7 +347,7 @@ export default function Dashboard({ onLogout }: DashboardProps) {
       </div>
 
       {/* Abas de Navegação */}
-      <div style={{ display: 'flex', gap: '12px', marginBottom: '32px', borderBottom: '1px solid var(--border-color)', paddingBottom: '16px' }}>
+      <div style={{ display: 'flex', gap: '12px', marginBottom: '32px', borderBottom: '1px solid var(--border-color)', paddingBottom: '16px', flexWrap: 'wrap' }}>
         <button 
           onClick={() => setActiveTab('agenda')}
           className={activeTab === 'agenda' ? 'btn-primary' : 'btn-secondary'}
@@ -304,6 +363,14 @@ export default function Dashboard({ onLogout }: DashboardProps) {
         >
           <Scissors size={16} />
           Gerenciar Serviços & Preços
+        </button>
+        <button 
+          onClick={() => setActiveTab('horarios')}
+          className={activeTab === 'horarios' ? 'btn-primary' : 'btn-secondary'}
+          style={{ width: 'auto', padding: '10px 20px', fontSize: '0.9rem' }}
+        >
+          <Settings size={16} />
+          Configurar Horários
         </button>
       </div>
 
@@ -584,7 +651,6 @@ export default function Dashboard({ onLogout }: DashboardProps) {
                               backgroundColor: isEditing ? 'rgba(209, 138, 153, 0.05)' : 'transparent'
                             }}
                           >
-                            {/* Coluna 1: Tipo de Roupa */}
                             <td style={{ padding: '14px 8px' }}>
                               {isEditing ? (
                                 <input
@@ -599,7 +665,6 @@ export default function Dashboard({ onLogout }: DashboardProps) {
                               )}
                             </td>
 
-                            {/* Coluna 2: Nome do Serviço */}
                             <td style={{ padding: '14px 8px' }}>
                               {isEditing ? (
                                 <input
@@ -614,7 +679,6 @@ export default function Dashboard({ onLogout }: DashboardProps) {
                               )}
                             </td>
 
-                            {/* Coluna 3: Preço Base */}
                             <td style={{ padding: '14px 8px' }}>
                               {isEditing ? (
                                 <input
@@ -633,7 +697,6 @@ export default function Dashboard({ onLogout }: DashboardProps) {
                               )}
                             </td>
 
-                            {/* Coluna 4: Ações (Editar, Salvar, Cancelar, Deletar) */}
                             <td style={{ padding: '14px 8px', textAlign: 'center' }}>
                               <div style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
                                 {isEditing ? (
@@ -641,26 +704,14 @@ export default function Dashboard({ onLogout }: DashboardProps) {
                                     <button 
                                       onClick={() => handleUpdateService(service.id)}
                                       disabled={isSavingEdit}
-                                      style={{ 
-                                        background: 'transparent', 
-                                        border: 'none', 
-                                        color: '#0f5132', 
-                                        cursor: 'pointer',
-                                        padding: '4px' 
-                                      }}
-                                      title="Salvar alterações"
+                                      style={{ background: 'transparent', border: 'none', color: '#0f5132', cursor: 'pointer', padding: '4px' }}
+                                      title="Salvar"
                                     >
                                       <Save size={18} />
                                     </button>
                                     <button 
                                       onClick={cancelEditService}
-                                      style={{ 
-                                        background: 'transparent', 
-                                        border: 'none', 
-                                        color: '#842029', 
-                                        cursor: 'pointer',
-                                        padding: '4px' 
-                                      }}
+                                      style={{ background: 'transparent', border: 'none', color: '#842029', cursor: 'pointer', padding: '4px' }}
                                       title="Cancelar"
                                     >
                                       <X size={18} />
@@ -670,27 +721,15 @@ export default function Dashboard({ onLogout }: DashboardProps) {
                                   <>
                                     <button 
                                       onClick={() => startEditService(service)}
-                                      style={{ 
-                                        background: 'transparent', 
-                                        border: 'none', 
-                                        color: 'var(--text-muted)', 
-                                        cursor: 'pointer',
-                                        padding: '4px' 
-                                      }}
-                                      title="Editar serviço"
+                                      style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: '4px' }}
+                                      title="Editar"
                                     >
                                       <Edit2 size={16} />
                                     </button>
                                     <button 
                                       onClick={() => handleRemoveService(service.id)}
-                                      style={{ 
-                                        background: 'transparent', 
-                                        border: 'none', 
-                                        color: '#842029', 
-                                        cursor: 'pointer',
-                                        padding: '4px' 
-                                      }}
-                                      title="Excluir serviço"
+                                      style={{ background: 'transparent', border: 'none', color: '#842029', cursor: 'pointer', padding: '4px' }}
+                                      title="Excluir"
                                     >
                                       <Trash2 size={16} />
                                     </button>
@@ -768,6 +807,124 @@ export default function Dashboard({ onLogout }: DashboardProps) {
                 </button>
               </form>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ABA 3: CONFIGURAR HORÁRIOS DE ATENDIMENTO E PRODUÇÃO */}
+      {activeTab === 'horarios' && (
+        <div className="animate-fade-in" style={{ width: '100%' }}>
+          <div className="card-lux">
+            <h2 style={{ fontSize: '1.8rem', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <Settings style={{ color: 'var(--gold-primary)' }} />
+              Configurações Semanais da Agenda
+            </h2>
+            <p style={{ color: 'var(--text-muted)', marginBottom: '32px' }}>
+              Defina os dias e horários de funcionamento do ateliê. Os clientes só poderão marcar visitas no **Horário de Atendimento**, e os períodos de **Produção Interna** (costura) serão bloqueados automaticamente para agendamentos.
+            </p>
+
+            {loading ? (
+              <p style={{ color: 'var(--text-muted)' }}>Carregando horários semanais...</p>
+            ) : (
+              <form onSubmit={handleUpdateWeeklyHours}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '24px', marginBottom: '32px' }}>
+                  {weeklyHours.map((day) => (
+                    <div 
+                      key={day.id} 
+                      style={{ 
+                        background: 'rgba(255,255,255,0.4)', 
+                        border: '1px solid var(--border-color)', 
+                        borderRadius: '16px',
+                        padding: '20px',
+                        display: 'grid',
+                        gridTemplateColumns: '150px repeat(2, 1fr) 100px',
+                        alignItems: 'center',
+                        gap: '20px',
+                        flexWrap: 'wrap'
+                      }}
+                      className="appointment-card-details" // Usa a classe responsiva do CSS global para quebrar em coluna no mobile
+                    >
+                      {/* Dia e Checkbox */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                        <input
+                          type="checkbox"
+                          checked={day.is_open}
+                          onChange={(e) => handleWeeklyHoursChange(day.id, 'is_open', e.target.checked)}
+                          id={`day-${day.id}`}
+                          style={{ width: '20px', height: '20px', accentColor: 'var(--pink-primary)', cursor: 'pointer' }}
+                        />
+                        <label htmlFor={`day-${day.id}`} style={{ fontWeight: 600, cursor: 'pointer' }}>{day.day_name}</label>
+                      </div>
+
+                      {/* Horário de Atendimento (Apenas se o dia estiver aberto) */}
+                      {day.is_open ? (
+                        <>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                            <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontWeight: 500 }}>Atendimento (Clientes)</span>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              <input
+                                type="time"
+                                value={day.open_time.slice(0, 5)}
+                                onChange={(e) => handleWeeklyHoursChange(day.id, 'open_time', e.target.value + ':00')}
+                                className="input-lux"
+                                style={{ padding: '8px', paddingLeft: '12px', fontSize: '0.9rem' }}
+                              />
+                              <span style={{ fontSize: '0.85rem' }}>às</span>
+                              <input
+                                type="time"
+                                value={day.close_time.slice(0, 5)}
+                                onChange={(e) => handleWeeklyHoursChange(day.id, 'close_time', e.target.value + ':00')}
+                                className="input-lux"
+                                style={{ padding: '8px', paddingLeft: '12px', fontSize: '0.9rem' }}
+                              />
+                            </div>
+                          </div>
+
+                          {/* Horário de Produção (Interno) */}
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                            <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontWeight: 500 }}>Produção Interna (Bloqueia Cliente)</span>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              <input
+                                type="time"
+                                value={day.production_start.slice(0, 5)}
+                                onChange={(e) => handleWeeklyHoursChange(day.id, 'production_start', e.target.value + ':00')}
+                                className="input-lux"
+                                style={{ padding: '8px', paddingLeft: '12px', fontSize: '0.9rem' }}
+                              />
+                              <span style={{ fontSize: '0.85rem' }}>às</span>
+                              <input
+                                type="time"
+                                value={day.production_end.slice(0, 5)}
+                                onChange={(e) => handleWeeklyHoursChange(day.id, 'production_end', e.target.value + ':00')}
+                                className="input-lux"
+                                style={{ padding: '8px', paddingLeft: '12px', fontSize: '0.9rem' }}
+                              />
+                            </div>
+                          </div>
+
+                          <div style={{ fontSize: '0.85rem', color: 'var(--pink-primary)', fontWeight: 600, textAlign: 'center' }}>
+                            Aberto
+                          </div>
+                        </>
+                      ) : (
+                        <div style={{ gridColumn: 'span 3', color: 'var(--text-muted)', fontStyle: 'italic', fontSize: '0.95rem', padding: '8px 0' }}>
+                          Ateliê Fechado neste dia. Sem agendamentos.
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+
+                <button 
+                  type="submit" 
+                  disabled={isSavingHours}
+                  className="btn-primary" 
+                  style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '8px' }}
+                >
+                  {isSavingHours ? 'Salvando Configurações...' : 'Salvar Configurações da Agenda'}
+                </button>
+              </form>
+            )}
           </div>
         </div>
       )}

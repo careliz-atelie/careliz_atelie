@@ -13,20 +13,34 @@ interface SchedulerProps {
   onBack: () => void;
 }
 
-const AVAILABLE_HOURS = ['09:00', '10:00', '11:00', '14:00', '15:00', '16:00', '17:00'];
+interface BusinessHours {
+  id: number;
+  day_name: string;
+  is_open: boolean;
+  open_time: string;
+  close_time: string;
+  production_start: string;
+  production_end: string;
+}
 
 export default function Scheduler({ qualificationData, onBack }: SchedulerProps) {
   const [selectedDate, setSelectedDate] = useState('');
   const [selectedTime, setSelectedTime] = useState('');
   const [clientName, setClientName] = useState('');
   const [clientPhone, setClientPhone] = useState('');
+  
+  // Disponibilidade
+  const [weeklyHours, setWeeklyHours] = useState<BusinessHours[]>([]);
+  const [availableSlots, setAvailableSlots] = useState<string[]>([]);
   const [busyHours, setBusyHours] = useState<string[]>([]);
   const [isDayBlocked, setIsDayBlocked] = useState(false);
+  const [dayClosedMessage, setDayClosedMessage] = useState('');
+  
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
   const [datesList, setDatesList] = useState<{ value: string; label: string }[]>([]);
 
-  // Gerar os próximos 14 dias úteis (excluindo domingos)
+  // 1. Gerar os próximos 14 dias (excluindo domingos)
   useEffect(() => {
     const dates = [];
     const today = new Date();
@@ -35,7 +49,7 @@ export default function Scheduler({ qualificationData, onBack }: SchedulerProps)
       const date = new Date(today);
       date.setDate(today.getDate() + i);
       
-      if (date.getDay() !== 0) {
+      if (date.getDay() !== 0) { // Excluir domingo da lista inicial
         const value = date.toISOString().split('T')[0];
         const label = date.toLocaleDateString('pt-BR', { 
           weekday: 'short', 
@@ -46,14 +60,81 @@ export default function Scheduler({ qualificationData, onBack }: SchedulerProps)
       }
     }
     setDatesList(dates);
+
+    // Carregar configurações semanais de horários do Supabase
+    async function loadWeeklyHours() {
+      try {
+        const { data, error } = await supabase
+          .from('business_hours')
+          .select('*');
+        if (error) throw error;
+        setWeeklyHours(data || []);
+      } catch (err) {
+        console.error('Erro ao carregar horários semanais:', err);
+      }
+    }
+    loadWeeklyHours();
   }, []);
 
-  // Buscar horários ocupados/bloqueados do banco sempre que mudar a data
-  useEffect(() => {
-    if (!selectedDate) return;
+  // Auxiliares de tempo para manipulação de minutos
+  const parseTimeToMinutes = (timeStr: string): number => {
+    const [h, m] = timeStr.split(':').map(Number);
+    return h * 60 + m;
+  };
 
-    async function loadAvailability() {
+  const minutesToTime = (minutes: number): string => {
+    const h = Math.floor(minutes / 60);
+    const m = minutes % 60;
+    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+  };
+
+  // 2. Buscar disponibilidade e gerar slots de 30min ao mudar a data
+  useEffect(() => {
+    if (!selectedDate || weeklyHours.length === 0) return;
+
+    async function calculateDailySlots() {
       try {
+        // Encontra o dia da semana correspondente (1 = Segunda, ..., 6 = Sábado, 0 = Domingo)
+        // Usar sufixo T00:00:00 para manter o fuso horário correto
+        const dateObj = new Date(selectedDate + 'T00:00:00');
+        const dayOfWeek = dateObj.getDay();
+
+        if (dayOfWeek === 0) {
+          setIsDayBlocked(true);
+          setDayClosedMessage('O ateliê não abre aos Domingos.');
+          setAvailableSlots([]);
+          return;
+        }
+
+        const todaySetting = weeklyHours.find(h => h.id === dayOfWeek);
+
+        if (!todaySetting || !todaySetting.is_open) {
+          setIsDayBlocked(true);
+          setDayClosedMessage('A costureira não atende neste dia da semana.');
+          setAvailableSlots([]);
+          return;
+        }
+
+        setIsDayBlocked(false);
+        setDayClosedMessage('');
+
+        // Gerar os slots de 30 em 30 minutos
+        const openMin = parseTimeToMinutes(todaySetting.open_time);
+        const closeMin = parseTimeToMinutes(todaySetting.close_time);
+        const prodStartMin = parseTimeToMinutes(todaySetting.production_start);
+        const prodEndMin = parseTimeToMinutes(todaySetting.production_end);
+
+        const slots: string[] = [];
+        for (let min = openMin; min < closeMin; min += 30) {
+          // Excluir horários que sobrepõem com o período de produção interna da costureira
+          if (min >= prodStartMin && min < prodEndMin) {
+            continue;
+          }
+          slots.push(minutesToTime(min));
+        }
+        setAvailableSlots(slots);
+
+        // 3. Buscar agendamentos existentes para desabilitar os ocupados
         const { data: appointments, error: appError } = await supabase
           .from('appointments')
           .select('appointment_time')
@@ -62,6 +143,7 @@ export default function Scheduler({ qualificationData, onBack }: SchedulerProps)
 
         if (appError) throw appError;
 
+        // 4. Buscar folgas/bloqueios pontuais do banco
         const { data: blocks, error: blockError } = await supabase
           .from('blocked_slots')
           .select('start_time, end_time')
@@ -69,38 +151,39 @@ export default function Scheduler({ qualificationData, onBack }: SchedulerProps)
 
         if (blockError) throw blockError;
 
-        const dayBlocked = blocks?.some(b => !b.start_time) || false;
-        setIsDayBlocked(dayBlocked);
-
-        if (dayBlocked) {
-          setBusyHours(AVAILABLE_HOURS);
-        } else {
-          const busyApps = appointments?.map(a => a.appointment_time.slice(0, 5)) || [];
-          const busyBlocks: string[] = [];
-          
-          blocks?.forEach(b => {
-            if (b.start_time && b.end_time) {
-              const start = b.start_time.slice(0, 5);
-              const end = b.end_time.slice(0, 5);
-              AVAILABLE_HOURS.forEach(hour => {
-                if (hour >= start && hour < end) {
-                  busyBlocks.push(hour);
-                }
-              });
-            }
-          });
-
-          const allBusy = Array.from(new Set([...busyApps, ...busyBlocks]));
-          setBusyHours(allBusy);
+        const dayBlockedPoint = blocks?.some(b => !b.start_time) || false;
+        if (dayBlockedPoint) {
+          setIsDayBlocked(true);
+          setDayClosedMessage('A costureira bloqueou este dia na agenda para fins pessoais.');
+          setAvailableSlots([]);
+          return;
         }
+
+        const busyApps = appointments?.map(a => a.appointment_time.slice(0, 5)) || [];
+        const busyBlocks: string[] = [];
+        
+        blocks?.forEach(b => {
+          if (b.start_time && b.end_time) {
+            const start = parseTimeToMinutes(b.start_time);
+            const end = parseTimeToMinutes(b.end_time);
+            slots.forEach(slot => {
+              const slotMin = parseTimeToMinutes(slot);
+              if (slotMin >= start && slotMin < end) {
+                busyBlocks.push(slot);
+              }
+            });
+          }
+        });
+
+        setBusyHours(Array.from(new Set([...busyApps, ...busyBlocks])));
       } catch (err) {
-        console.error('Erro ao verificar disponibilidade:', err);
+        console.error('Erro ao verificar disponibilidade diária:', err);
       }
     }
 
-    loadAvailability();
+    calculateDailySlots();
     setSelectedTime('');
-  }, [selectedDate]);
+  }, [selectedDate, weeklyHours]);
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -110,7 +193,10 @@ export default function Scheduler({ qualificationData, onBack }: SchedulerProps)
     }
 
     setIsSubmitting(true);
+    const finalPrice = Math.round(qualificationData.priceEstimate * 0.9);
+
     try {
+      // 1. Salva no Supabase
       const { error } = await supabase
         .from('appointments')
         .insert([
@@ -126,6 +212,21 @@ export default function Scheduler({ qualificationData, onBack }: SchedulerProps)
         ]);
 
       if (error) throw error;
+
+      // 2. Dispara a notificação via Netlify Serverless Function de forma assíncrona
+      fetch('/.netlify/functions/whatsapp-notify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          client_name: clientName,
+          client_phone: clientPhone,
+          service_type: qualificationData.serviceType,
+          estimated_price: `R$ ${finalPrice} - R$ ${Math.round(qualificationData.priceEstimate * 1.25)}`,
+          appointment_date: selectedDate,
+          appointment_time: selectedTime
+        })
+      }).catch(err => console.error('Erro ao disparar notificação de WhatsApp:', err));
+
       setIsSuccess(true);
     } catch (err) {
       console.error('Erro ao agendar:', err);
@@ -224,15 +325,17 @@ export default function Scheduler({ qualificationData, onBack }: SchedulerProps)
             <div className="animate-fade-in" style={{ marginBottom: '28px' }}>
               <label style={{ fontWeight: 600, marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '6px' }}>
                 <Clock size={16} />
-                2. Selecione o Horário
+                2. Selecione o Horário (Slots de 30min)
               </label>
               {isDayBlocked ? (
                 <p style={{ color: 'var(--status-canceled-text)', fontSize: '0.9rem', background: 'var(--status-canceled)', padding: '12px', borderRadius: '8px', border: '1px solid rgba(132,32,41,0.1)' }}>
-                  A costureira não atenderá nesta data. Por favor, escolha outro dia.
+                  {dayClosedMessage || 'A costureira não atenderá nesta data.'}
                 </p>
+              ) : availableSlots.length === 0 ? (
+                <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>Carregando horários...</p>
               ) : (
                 <div className="hours-grid">
-                  {AVAILABLE_HOURS.map((hour) => {
+                  {availableSlots.map((hour) => {
                     const isBusy = busyHours.includes(hour);
                     return (
                       <button
