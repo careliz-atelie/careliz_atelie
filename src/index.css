@@ -1,0 +1,371 @@
+/* ==========================================
+   DESIGN SYSTEM - ATELIÊ DE COSTURA PREMIUM
+   ========================================== */
+
+@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,600;1,400&family=Outfit:wght@300;400;500;600&display=swap');
+
+:root {
+  /* Cores Base - Brancos mais limpos e pretos mais profundos para contraste */
+  --bg-primary: #FDFBF7;           /* Creme mais claro e limpo para destacar o conteúdo */
+  --bg-card: rgba(255, 255, 255, 0.9); /* Card mais opaco para melhor legibilidade */
+  --text-main: #1A0F0F;            /* Espresso quase preto (máximo contraste e elegância) */
+  --text-muted: #5E4E4E;           /* Marrom escuro acinzentado para legibilidade */
+  
+  /* Cores de Destaque - Tons mais ricos, profundos e vibrantes */
+  --pink-primary: #B84A62;         /* Rosa Berry rico (cor vibrante, luxuosa e marcante) */
+  --pink-light: #FDF2F4;           /* Rosa claro de fundo com mais contraste */
+  --pink-hover: #963349;           /* Tom de rosa mais profundo para estados ativos */
+  
+  --gold-primary: #B08B53;         /* Dourado Bronze quente (presença mais forte na tela) */
+  --gold-light: #F7EFE4;           /* Dourado claro para hover e destaque */
+  --gold-dark: #7C5F33;            /* Dourado escuro de alta legibilidade para títulos */
+  --gold-gradient: linear-gradient(135deg, #937140 0%, #D8B275 50%, #937140 100%); /* Degradê dourado metálico rico */
+  
+  /* Status */
+  --status-pending: #FFF3CD;
+  --status-pending-text: #664D03;
+  --status-confirmed: #D1E7DD;
+  --status-confirmed-text: #0F5132;
+  --status-completed: #CFE2FF;
+  --status-completed-text: #084298;
+  --status-canceled: #F8D7DA;
+  --status-canceled-text: #842029;
+
+  /* Bordas, Sombras e Efeitos - Mais marcados para evitar o visual morno */
+  --border-color: rgba(176, 139, 83, 0.38); /* Borda dourada mais visível */
+  --border-focus: #B84A62;           /* Foco no Rosa Berry */
+  --shadow-lux: 0 16px 48px -4px rgba(26, 15, 15, 0.09); /* Sombras mais definidas */
+  --shadow-button: 0 8px 20px -4px rgba(176, 139, 83, 0.55);
+  --radius-lg: 20px;
+  --radius-md: 12px;
+  --radius-sm: 8px;
+}
+
+/* --- RESET & ESTRUTURA --- */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  background-color: var(--bg-primary);
+  color: var(--text-main);
+  font-family: 'Outfit', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  line-height: 1.5;
+  overflow-x: hidden;
+}
+
+/* Scrollbar Personalizada */
+::-webkit-scrollbar {
+  width: 8px;
+}
+::-webkit-scrollbar-track {
+  background: var(--bg-primary);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--gold-primary);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--gold-dark);
+}
+
+/* --- TIPOGRAFIA --- */
+h1, h2, h3, h4 {
+  font-family: 'Cormorant Garamond', serif;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+}
+
+h1 {
+  font-size: 2.8rem;
+  line-height: 1.1;
+}
+
+h2 {
+  font-size: 2rem;
+  line-height: 1.2;
+}
+
+p {
+  font-size: 1rem;
+  color: var(--text-muted);
+}
+
+/* --- ANIMAÇÕES --- */
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.4s ease forwards;
+}
+
+.animate-fade-up {
+  animation: fadeInUp 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* --- COMPONENTES GLOBAIS --- */
+
+.app-wrapper {
+  max-width: 680px;
+  margin: 0 auto;
+  padding: 40px 20px 80px 20px;
+}
+
+/* Card Efeito Vidro (Premium) */
+.card-lux {
+  background: var(--bg-card);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  padding: 40px;
+  box-shadow: var(--shadow-lux);
+  position: relative;
+  overflow: hidden;
+  transition: transform 0.3s ease, box-shadow 0.3s ease;
+}
+
+/* Botões */
+.btn-primary {
+  background: var(--gold-gradient);
+  color: #FFFFFF;
+  border: none;
+  border-radius: var(--radius-md);
+  padding: 14px 28px;
+  font-family: 'Outfit', sans-serif;
+  font-weight: 500;
+  font-size: 1rem;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  box-shadow: var(--shadow-button);
+  width: 100%;
+}
+
+.btn-primary:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 28px -4px rgba(197, 168, 128, 0.6);
+  opacity: 0.95;
+}
+
+.btn-primary:active {
+  transform: translateY(0);
+}
+
+.btn-primary:disabled {
+  background: var(--text-muted);
+  opacity: 0.4;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+.btn-secondary {
+  background-color: var(--pink-light);
+  color: var(--pink-primary);
+  border: 1px solid rgba(209, 138, 153, 0.2);
+  border-radius: var(--radius-md);
+  padding: 14px 28px;
+  font-family: 'Outfit', sans-serif;
+  font-weight: 500;
+  font-size: 1rem;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  transition: all 0.2s ease;
+  width: 100%;
+}
+
+.btn-secondary:hover {
+  background-color: rgba(209, 138, 153, 0.15);
+  color: var(--pink-hover);
+  border-color: rgba(209, 138, 153, 0.3);
+}
+
+/* Inputs Luxuosos */
+.input-lux {
+  width: 100%;
+  padding: 14px 16px 14px 44px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-color);
+  background: rgba(255, 255, 255, 0.5);
+  color: var(--text-main);
+  font-family: 'Outfit', sans-serif;
+  font-size: 1rem;
+  outline: none;
+  transition: all 0.25s ease;
+}
+
+.input-lux:focus {
+  border-color: var(--border-focus);
+  background: #FFFFFF;
+  box-shadow: 0 0 0 4px rgba(209, 138, 153, 0.12);
+}
+
+/* Opções de Seleção (Rádio) */
+.option-select {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 20px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-color);
+  background: rgba(255, 255, 255, 0.3);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.option-select:hover {
+  background: var(--pink-light);
+  border-color: rgba(209, 138, 153, 0.3);
+}
+
+.option-select.active {
+  background: var(--pink-light);
+  border-color: var(--pink-primary);
+  font-weight: 500;
+}
+
+.option-select input[type="radio"] {
+  accent-color: var(--pink-primary);
+  width: 18px;
+  height: 18px;
+}
+
+/* --- GRIDS DE AGENDAMENTO --- */
+
+/* Lista de Datas */
+.dates-scroll {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(84px, 1fr));
+  gap: 8px;
+  max-height: 190px;
+  overflow-y: auto;
+  padding: 4px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  margin-bottom: 24px;
+}
+
+/* Grade de Horas */
+.hours-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  margin-bottom: 24px;
+}
+
+/* --- PAINEL / DASHBOARD --- */
+
+.dashboard-wrapper {
+  max-width: 1140px;
+  margin: 0 auto;
+  padding: 40px 20px;
+}
+
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: 1fr 340px;
+  gap: 32px;
+  align-items: start;
+}
+
+.appointment-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.appointment-card {
+  background: rgba(255, 255, 255, 0.45);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: 20px;
+  box-shadow: 0 4px 12px rgba(44, 31, 31, 0.02);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.appointment-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(44, 31, 31, 0.04);
+}
+
+/* ==========================================
+   RESPONSIVIDADE (MOBILE-FIRST ADAPTATIONS)
+   ========================================== */
+
+@media (max-width: 768px) {
+  h1 {
+    font-size: 2.2rem;
+  }
+  
+  h2 {
+    font-size: 1.6rem;
+  }
+
+  .app-wrapper {
+    padding: 20px 12px 60px 12px;
+  }
+
+  .card-lux {
+    padding: 30px 20px;
+    border-radius: var(--radius-md);
+  }
+
+  /* Horários: 3 colunas em mobile */
+  .hours-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+
+  /* Grid do Painel vira coluna única */
+  .dashboard-grid {
+    grid-template-columns: 1fr;
+    gap: 24px;
+  }
+
+  .dashboard-wrapper {
+    padding: 20px 12px;
+  }
+
+  /* Cards de agendamento em mobile */
+  .appointment-card {
+    padding: 16px;
+  }
+  
+  .appointment-card-details {
+    flex-wrap: wrap;
+    gap: 8px !important;
+  }
+}
+
+@media (max-width: 480px) {
+  /* Horários: 2 colunas em telas muito pequenas */
+  .hours-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .dates-scroll {
+    grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
+  }
+}
