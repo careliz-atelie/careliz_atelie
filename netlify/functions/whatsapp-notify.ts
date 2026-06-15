@@ -29,12 +29,12 @@ export const handler: Handler = async (event) => {
     const whatsappApiToken = process.env.WHATSAPP_API_TOKEN;
     const recipientNumber = process.env.WHATSAPP_RECIPIENT_NUMBER; // Telefone da costureira
 
-    if (!whatsappApiUrl || !whatsappApiToken || !recipientNumber) {
-      console.warn('Variáveis de WhatsApp não configuradas no servidor. O agendamento foi salvo no banco de dados, mas o envio da mensagem foi pulado.');
+    if (!whatsappApiUrl || !recipientNumber) {
+      console.warn('Variáveis de WhatsApp essenciais não configuradas (URL ou número de destino).');
       return {
         statusCode: 200,
         headers,
-        body: JSON.stringify({ message: 'Agendamento salvo, mas notificação pulada por falta de variáveis de ambiente.' }),
+        body: JSON.stringify({ message: 'Agendamento salvo, mas notificação pulada por falta de URL ou número de destino.' }),
       };
     }
 
@@ -52,15 +52,19 @@ export const handler: Handler = async (event) => {
       `👉 _Acesse o painel para gerenciar os compromissos do ateliê._`;
 
     // Exemplo de payload para gateways populares (Z-API / Evolution API)
-    // Geralmente requer a URL da instância, o cabeçalho de token e um corpo com 'phone' e 'message'
+    // Monta os headers dinamicamente dependendo se o token foi fornecido
+    const requestHeaders: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+
+    if (whatsappApiToken) {
+      requestHeaders['Authorization'] = `Bearer ${whatsappApiToken}`;
+      requestHeaders['Client-Token'] = whatsappApiToken;
+    }
+
     const response = await fetch(whatsappApiUrl, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${whatsappApiToken}`,
-        // Alguns gateways usam Client-Token ou Headers customizados:
-        'Client-Token': whatsappApiToken,
-      },
+      headers: requestHeaders,
       body: JSON.stringify({
         // Adaptável de acordo com o provedor (Z-API ou Evolution API)
         phone: recipientNumber,
