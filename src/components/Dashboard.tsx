@@ -496,9 +496,23 @@ export default function Dashboard({ onLogout }: DashboardProps) {
         flexWrap: 'wrap',
         gap: '16px' 
       }}>
-        <div>
-          <h1 style={{ fontSize: '2.5rem', margin: 0 }}>Painel de Gestão</h1>
-          <p style={{ color: 'var(--text-muted)' }}>Gerencie seus horários, clientes e serviços.</p>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+          <img 
+            src="/logo.jpg" 
+            alt="Careliz Ateliê Logo" 
+            style={{ 
+              height: '60px', 
+              width: '60px', 
+              borderRadius: '12px', 
+              objectFit: 'cover',
+              border: '2px solid var(--gold-primary)',
+              boxShadow: '0 4px 10px rgba(0,0,0,0.05)'
+            }} 
+          />
+          <div>
+            <h1 style={{ fontSize: '2.5rem', margin: 0 }}>Painel de Gestão</h1>
+            <p style={{ color: 'var(--text-muted)' }}>Gerencie os horários, clientes e serviços da Careliz Ateliê.</p>
+          </div>
         </div>
         <button 
           onClick={handleSignOut} 

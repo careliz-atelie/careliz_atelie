@@ -155,7 +155,21 @@ Gostaria de tirar algumas dúvidas!`;
         flexWrap: 'wrap',
         gap: '16px' 
       }}>
-        <h1 style={{ fontSize: '2.4rem', margin: 0 }}>Ateliê de Costura</h1>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+          <img 
+            src="/logo.jpg" 
+            alt="Careliz Ateliê Logo" 
+            style={{ 
+              height: '60px', 
+              width: '60px', 
+              borderRadius: '12px', 
+              objectFit: 'cover',
+              border: '2px solid var(--gold-primary)',
+              boxShadow: '0 4px 10px rgba(0,0,0,0.05)'
+            }} 
+          />
+          <h1 style={{ fontSize: '2.4rem', margin: 0 }}>Careliz Ateliê</h1>
+        </div>
         <button 
           onClick={onNavigateToLogin}
           className="btn-secondary"
