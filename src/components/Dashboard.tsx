@@ -428,11 +428,6 @@ export default function Dashboard({ onLogout }: DashboardProps) {
       return;
     }
 
-    if (!window.confirm('Deseja realmente liberar este dia na sua agenda?')) {
-      console.log('Desbloqueio cancelado pelo usuário.');
-      return;
-    }
-
     try {
       console.log('Enviando requisição de exclusão para o Supabase para o id:', id);
       const { error } = await supabase
@@ -561,8 +556,6 @@ export default function Dashboard({ onLogout }: DashboardProps) {
 
   // Remover um Serviço
   const handleRemoveService = async (id: string) => {
-    if (!window.confirm('Deseja realmente excluir este serviço da listagem?')) return;
-
     try {
       const { error } = await supabase
         .from('services')
