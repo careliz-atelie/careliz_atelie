@@ -51,7 +51,33 @@ export const handler: Handler = async (event) => {
       `📅 *Data*: ${formattedDate} às ${formattedTime}\n\n` +
       `👉 _Acesse o painel para gerenciar os compromissos do ateliê._`;
 
-    // Exemplo de payload para gateways populares (Z-API / Evolution API)
+    // Identifica o formato do payload com base na URL do gateway para evitar enviar
+    // propriedades misturadas, o que costuma causar erro "400 Bad Request" em APIs estritas.
+    let payload = {};
+    const lowerUrl = whatsappApiUrl.toLowerCase();
+
+    if (lowerUrl.includes('evolution') || lowerUrl.includes('sendtext') || lowerUrl.includes('send-text')) {
+      // Formato Evolution API / Z-API (sendText)
+      // Z-API usa 'phone'/'message' no endpoint send-text mas a Evolution usa 'number'/'text' no sendText
+      if (lowerUrl.includes('evolution')) {
+        payload = {
+          number: recipientNumber,
+          text: textMessage
+        };
+      } else {
+        payload = {
+          phone: recipientNumber,
+          message: textMessage
+        };
+      }
+    } else {
+      // Formato Padrão / Z-API (caso a URL não possua palavras específicas)
+      payload = {
+        phone: recipientNumber,
+        message: textMessage
+      };
+    }
+
     // Monta os headers dinamicamente dependendo se o token foi fornecido
     const requestHeaders: Record<string, string> = {
       'Content-Type': 'application/json',
@@ -65,14 +91,7 @@ export const handler: Handler = async (event) => {
     const response = await fetch(whatsappApiUrl, {
       method: 'POST',
       headers: requestHeaders,
-      body: JSON.stringify({
-        // Adaptável de acordo com o provedor (Z-API ou Evolution API)
-        phone: recipientNumber,
-        message: textMessage,
-        // Caso use outro gateway:
-        number: recipientNumber,
-        text: textMessage
-      }),
+      body: JSON.stringify(payload),
     });
 
     if (!response.ok) {
