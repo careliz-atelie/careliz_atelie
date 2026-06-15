@@ -422,15 +422,26 @@ export default function Dashboard({ onLogout }: DashboardProps) {
 
   // Remover um bloqueio
   const handleRemoveBlock = async (id: string) => {
-    if (!confirm('Deseja realmente liberar este dia na sua agenda?')) return;
+    console.log('handleRemoveBlock chamado com ID:', id);
+    if (!id) {
+      console.warn('handleRemoveBlock ignorado: ID inválido.');
+      return;
+    }
+
+    if (!window.confirm('Deseja realmente liberar este dia na sua agenda?')) {
+      console.log('Desbloqueio cancelado pelo usuário.');
+      return;
+    }
 
     try {
+      console.log('Enviando requisição de exclusão para o Supabase para o id:', id);
       const { error } = await supabase
         .from('blocked_slots')
         .delete()
         .eq('id', id);
 
       if (error) throw error;
+      console.log('Bloqueio removido com sucesso do banco de dados.');
       setBlockedSlots(prev => prev.filter(b => b.id !== id));
     } catch (err) {
       console.error('Erro ao deletar bloqueio:', err);
@@ -550,7 +561,7 @@ export default function Dashboard({ onLogout }: DashboardProps) {
 
   // Remover um Serviço
   const handleRemoveService = async (id: string) => {
-    if (!confirm('Deseja realmente excluir este serviço da listagem?')) return;
+    if (!window.confirm('Deseja realmente excluir este serviço da listagem?')) return;
 
     try {
       const { error } = await supabase
@@ -677,6 +688,7 @@ export default function Dashboard({ onLogout }: DashboardProps) {
                     {b.reason && <p style={{ margin: 0, fontSize: '0.75rem', color: 'var(--text-muted)' }}>{b.reason}</p>}
                   </div>
                   <button 
+                    type="button"
                     onClick={() => handleRemoveBlock(b.id)}
                     style={{ 
                       background: 'transparent', 
