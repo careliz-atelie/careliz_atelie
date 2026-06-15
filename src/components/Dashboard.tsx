@@ -10,7 +10,7 @@ interface Appointment {
   estimated_price: number | null;
   appointment_date: string;
   appointment_time: string;
-  status: 'pending' | 'confirmed' | 'completed' | 'canceled';
+  status: 'pending' | 'confirmed' | 'ready' | 'completed' | 'canceled';
   notes: string | null;
   production_date: string | null;
   production_time: string | null;
@@ -80,9 +80,9 @@ export default function Dashboard({ onLogout }: DashboardProps) {
   // Sub-abas da Agenda (Ativos vs Histórico)
   const [agendaSubTab, setAgendaSubTab] = useState<'ativos' | 'historico'>('ativos');
 
-  // Ordena agendamentos ativos (Pendentes primeiro, depois Confirmados por ordem cronológica)
+  // Ordena agendamentos ativos (Pendentes primeiro, depois Confirmados/Prontos por ordem cronológica)
   const getSortedActiveAppointments = (apps: Appointment[]) => {
-    const active = apps.filter(app => app.status === 'pending' || app.status === 'confirmed');
+    const active = apps.filter(app => app.status === 'pending' || app.status === 'confirmed' || app.status === 'ready');
     return active.sort((a, b) => {
       if (a.status === 'pending' && b.status !== 'pending') return -1;
       if (a.status !== 'pending' && b.status === 'pending') return 1;
@@ -313,6 +313,48 @@ export default function Dashboard({ onLogout }: DashboardProps) {
     }
   };
 
+  // Disparar mensagem de "Concluído" para o cliente via WhatsApp dizendo dia e hora de busca
+  const sendReadyWhatsApp = async (app: Appointment) => {
+    try {
+      const formattedDate = app.delivery_date 
+        ? app.delivery_date.split('-').reverse().join('/') 
+        : 'combinar';
+      const formattedTime = app.delivery_time 
+        ? app.delivery_time.slice(0, 5) 
+        : '';
+
+      const timeString = formattedTime ? ` às ${formattedTime}` : '';
+
+      const clientMessage = `Olá, *${app.client_name}*!\n\n` +
+        `Temos uma ótima notícia: o ajuste/costura do seu serviço *${app.service_type}* no *Careliz Ateliê* foi concluído com sucesso e já está pronto! 🎉\n\n` +
+        `📦 *Você pode vir retirar no dia*: ${formattedDate}${timeString}\n\n` +
+        `Te aguardamos! Se precisar alterar o horário de retirada, por favor nos avise.`;
+
+      let cleanedPhone = app.client_phone.replace(/\D/g, '');
+      if (!cleanedPhone.startsWith('55') && cleanedPhone.length >= 10) {
+        cleanedPhone = '55' + cleanedPhone;
+      }
+
+      fetch('/.netlify/functions/whatsapp-notify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          client_name: app.client_name,
+          client_phone: app.client_phone,
+          service_type: app.service_type,
+          appointment_date: app.appointment_date,
+          appointment_time: app.appointment_time,
+          custom_jid: cleanedPhone,
+          custom_text: clientMessage
+        })
+      }).catch(err => console.error('Erro assíncrono ao notificar cliente:', err));
+
+      console.log('Mensagem de pronto/retirada enviada ao cliente com sucesso!');
+    } catch (err) {
+      console.error('Erro ao enviar mensagem de pronto/retirada ao cliente:', err);
+    }
+  };
+
   // Alterar o status do agendamento
   const handleUpdateStatus = async (id: string, newStatus: Appointment['status']) => {
     try {
@@ -332,6 +374,14 @@ export default function Dashboard({ onLogout }: DashboardProps) {
         const app = appointments.find(a => a.id === id);
         if (app) {
           sendConfirmationWhatsApp(app);
+        }
+      }
+
+      // Se for concluído (pronto para entrega), dispara notificação de retirada
+      if (newStatus === 'ready') {
+        const app = appointments.find(a => a.id === id);
+        if (app) {
+          sendReadyWhatsApp(app);
         }
       }
     } catch (err) {
@@ -552,6 +602,319 @@ export default function Dashboard({ onLogout }: DashboardProps) {
     );
   };
 
+  const renderBlockingCards = () => {
+    return (
+      <>
+        {/* Bloquear Horário */}
+        <div className="card-lux">
+          <h2 style={{ fontSize: '1.4rem', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <ShieldAlert style={{ color: 'var(--gold-primary)' }} />
+            Bloquear Agenda
+          </h2>
+          
+          <form onSubmit={handleCreateBlock}>
+            <div style={{ marginBottom: '12px' }}>
+              <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '6px' }}>Data a bloquear</label>
+              <input
+                type="date"
+                required
+                value={blockDate}
+                onChange={(e) => setBlockDate(e.target.value)}
+                className="input-lux"
+                style={{ paddingLeft: '12px' }}
+              />
+            </div>
+
+            <div style={{ marginBottom: '20px' }}>
+              <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '6px' }}>Motivo (opcional)</label>
+              <input
+                type="text"
+                placeholder="Ex: Feriado, Consulta"
+                value={blockReason}
+                onChange={(e) => setBlockReason(e.target.value)}
+                className="input-lux"
+                style={{ paddingLeft: '12px' }}
+              />
+            </div>
+
+            <button 
+              type="submit" 
+              disabled={isBlocking}
+              className="btn-primary" 
+              style={{ padding: '10px 0', fontSize: '0.9rem' }}
+            >
+              {isBlocking ? 'Bloqueando...' : 'Confirmar Bloqueio'}
+            </button>
+          </form>
+        </div>
+
+        {/* Lista de Dias Bloqueados */}
+        <div className="card-lux" style={{ maxHeight: '320px', overflowY: 'auto' }}>
+          <h3 style={{ fontSize: '1.25rem', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <Sliders size={18} />
+            Dias Bloqueados
+          </h3>
+          {blockedSlots.length === 0 ? (
+            <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Nenhuma data bloqueada.</p>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              {blockedSlots.map((b) => (
+                <div 
+                  key={b.id} 
+                  style={{ 
+                    background: 'rgba(255,255,255,0.4)', 
+                    border: '1px solid var(--border-color)',
+                    borderRadius: '8px',
+                    padding: '10px 12px',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    fontSize: '0.85rem'
+                  }}
+                >
+                  <div>
+                    <strong>{b.blocked_date.split('-').reverse().join('/')}</strong>
+                    {b.reason && <p style={{ margin: 0, fontSize: '0.75rem', color: 'var(--text-muted)' }}>{b.reason}</p>}
+                  </div>
+                  <button 
+                    onClick={() => handleRemoveBlock(b.id)}
+                    style={{ 
+                      background: 'transparent', 
+                      border: 'none', 
+                      color: '#842029', 
+                      cursor: 'pointer',
+                      padding: '4px',
+                      display: 'flex',
+                      alignItems: 'center'
+                    }}
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </>
+    );
+  };
+
+  const renderAgendaColumn = (title: string, apps: Appointment[], badgeBg: string, badgeColor: string) => {
+    return (
+      <div className="card-lux" style={{ padding: '16px', background: 'rgba(255, 255, 255, 0.35)', border: '1px solid var(--border-color)', display: 'flex', flexDirection: 'column', gap: '12px', minHeight: '350px' }}>
+        <h3 style={{ fontSize: '1.25rem', margin: 0, paddingBottom: '8px', borderBottom: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <span style={{ fontSize: '1.1rem', fontWeight: 600 }}>{title}</span>
+          <span style={{ fontSize: '0.85rem', background: badgeBg, color: badgeColor, padding: '2px 8px', borderRadius: '12px', fontWeight: 600 }}>{apps.length}</span>
+        </h3>
+        {apps.length === 0 ? (
+          <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', fontStyle: 'italic', margin: '16px 0', textAlign: 'center' }}>Vazio</p>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            {apps.map(app => {
+              const isPlanning = planningAppId === app.id;
+              const prodSlots = isPlanning ? getAvailableSlotsForDate(tempProdDate, 'production', app.id) : [];
+              const delivSlots = isPlanning ? getAvailableSlotsForDate(tempDelivDate, 'delivery', app.id) : [];
+              return (
+                <div key={app.id} className="appointment-card animate-fade-in" style={{ padding: '12px', background: '#ffffff', borderRadius: '12px', border: '1px solid var(--border-color)', boxShadow: '0 2px 6px rgba(0,0,0,0.02)' }}>
+                  {/* Nome e Link do WhatsApp */}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '8px', marginBottom: '8px' }}>
+                    <div>
+                      <strong style={{ fontSize: '0.95rem', display: 'block' }}>{app.client_name}</strong>
+                      <a 
+                        href={`https://wa.me/${app.client_phone.replace(/\D/g, '')}`} 
+                        target="_blank" 
+                        rel="noreferrer"
+                        style={{ fontSize: '0.75rem', color: 'var(--pink-primary)', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '2px' }}
+                      >
+                        <Phone size={10} />
+                        {app.client_phone}
+                      </a>
+                    </div>
+                  </div>
+
+                  {/* Informações Básicas */}
+                  <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '8px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                    <div>📅 {app.appointment_date.split('-').reverse().join('/')} às {app.appointment_time.slice(0, 5)}</div>
+                    <div>🛠️ <strong>{app.service_type}</strong></div>
+                    {app.estimated_price && <div>💰 R$ {app.estimated_price}</div>}
+                  </div>
+
+                  {/* Planejamento se houver */}
+                  {!isPlanning && (app.notes || app.production_date || app.delivery_date) && (
+                    <div style={{ fontSize: '0.75rem', background: 'rgba(197, 168, 128, 0.06)', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '6px', marginBottom: '8px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                      {app.notes && <div>📝 {app.notes}</div>}
+                      {app.production_date && <div>⚙️ Prod: {app.production_date.split('-').reverse().join('/')} {app.production_time ? `às ${app.production_time.slice(0, 5)}` : ''}</div>}
+                      {app.delivery_date && <div>📦 Entrega: {app.delivery_date.split('-').reverse().join('/')} {app.delivery_time ? `às ${app.delivery_time.slice(0, 5)}` : ''}</div>}
+                    </div>
+                  )}
+
+                  {/* Formulário de Planejamento Interno (Expandido) */}
+                  {isPlanning && (
+                    <div className="animate-fade-in" style={{ background: 'rgba(197, 168, 128, 0.05)', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '8px', marginBottom: '8px', fontSize: '0.8rem' }}>
+                      <div style={{ marginBottom: '8px' }}>
+                        <label style={{ display: 'block', fontSize: '0.7rem', fontWeight: 600, marginBottom: '2px' }}>Ajustes/Detalhes</label>
+                        <textarea
+                          value={tempNotes}
+                          onChange={(e) => setTempNotes(e.target.value)}
+                          placeholder="Ex: Barra 3cm, trocar zíper..."
+                          className="input-lux"
+                          style={{ padding: '6px', height: '45px', resize: 'vertical', fontSize: '0.8rem', paddingLeft: '6px' }}
+                        />
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '6px', marginBottom: '8px' }}>
+                        <div>
+                          <label style={{ display: 'block', fontSize: '0.7rem', fontWeight: 600, marginBottom: '2px' }}>⚙️ Data da Produção</label>
+                          <input
+                            type="date"
+                            value={tempProdDate}
+                            onChange={(e) => {
+                              const newDate = e.target.value;
+                              setTempProdDate(newDate);
+                              const slots = getAvailableSlotsForDate(newDate, 'production', app.id);
+                              if (tempProdTime && !slots.includes(tempProdTime)) {
+                                setTempProdTime('');
+                              }
+                            }}
+                            className="input-lux"
+                            style={{ padding: '6px', fontSize: '0.8rem', paddingLeft: '6px' }}
+                          />
+                        </div>
+                        <div>
+                          <label style={{ display: 'block', fontSize: '0.7rem', fontWeight: 600, marginBottom: '2px' }}>Hora da Produção</label>
+                          <select
+                            value={tempProdTime}
+                            onChange={(e) => setTempProdTime(e.target.value)}
+                            className="input-lux"
+                            disabled={!tempProdDate || prodSlots.length === 0}
+                            style={{ padding: '6px', fontSize: '0.8rem', paddingLeft: '6px' }}
+                          >
+                            {!tempProdDate ? (
+                              <option value="">Aguardando data...</option>
+                            ) : prodSlots.length === 0 ? (
+                              <option value="">Sem horários livres</option>
+                            ) : (
+                              <>
+                                <option value="">Selecione...</option>
+                                {prodSlots.map(opt => (
+                                  <option key={`prod-${opt}`} value={opt}>{opt}</option>
+                                ))}
+                              </>
+                            )}
+                          </select>
+                        </div>
+                        <div>
+                          <label style={{ display: 'block', fontSize: '0.7rem', fontWeight: 600, marginBottom: '2px' }}>📦 Data da Entrega</label>
+                          <input
+                            type="date"
+                            value={tempDelivDate}
+                            onChange={(e) => {
+                              const newDate = e.target.value;
+                              setTempDelivDate(newDate);
+                              const slots = getAvailableSlotsForDate(newDate, 'delivery', app.id);
+                              if (tempDelivTime && !slots.includes(tempDelivTime)) {
+                                setTempDelivTime('');
+                              }
+                            }}
+                            className="input-lux"
+                            style={{ padding: '6px', fontSize: '0.8rem', paddingLeft: '6px' }}
+                          />
+                        </div>
+                        <div>
+                          <label style={{ display: 'block', fontSize: '0.7rem', fontWeight: 600, marginBottom: '2px' }}>Hora da Entrega</label>
+                          <select
+                            value={tempDelivTime}
+                            onChange={(e) => setTempDelivTime(e.target.value)}
+                            className="input-lux"
+                            disabled={!tempDelivDate || delivSlots.length === 0}
+                            style={{ padding: '6px', fontSize: '0.8rem', paddingLeft: '6px' }}
+                          >
+                            {!tempDelivDate ? (
+                              <option value="">Aguardando data...</option>
+                            ) : delivSlots.length === 0 ? (
+                              <option value="">Sem horários livres</option>
+                            ) : (
+                              <>
+                                <option value="">Selecione...</option>
+                                {delivSlots.map(opt => (
+                                  <option key={`deliv-${opt}`} value={opt}>{opt}</option>
+                                ))}
+                              </>
+                            )}
+                          </select>
+                        </div>
+                      </div>
+                      <div style={{ display: 'flex', gap: '4px', justifyContent: 'flex-end' }}>
+                        <button onClick={cancelEditService} type="button" className="btn-secondary" style={{ padding: '4px 8px', fontSize: '0.75rem', height: '28px', width: 'auto' }}>Cancelar</button>
+                        <button onClick={() => handleSavePlanning(app.id)} disabled={isSavingPlanning} type="button" className="btn-primary" style={{ padding: '4px 8px', fontSize: '0.75rem', height: '28px', width: 'auto' }}>
+                          {isSavingPlanning ? '...' : 'Salvar'}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Ações do Card */}
+                  <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', marginTop: '8px' }}>
+                    <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                      {app.status === 'pending' && (
+                        <button
+                          onClick={() => handleUpdateStatus(app.id, 'confirmed')}
+                          className="btn-primary"
+                          style={{ padding: '4px 8px', fontSize: '0.75rem', background: '#0f5132', width: 'auto', height: '28px', boxShadow: 'none' }}
+                        >
+                          <Check size={12} /> Confirmar
+                        </button>
+                      )}
+
+                      {app.status === 'confirmed' && app.production_date && (
+                        <button
+                          onClick={() => handleUpdateStatus(app.id, 'ready')}
+                          className="btn-primary"
+                          style={{ padding: '4px 8px', fontSize: '0.75rem', background: 'var(--pink-primary)', width: 'auto', height: '28px', boxShadow: 'none' }}
+                        >
+                          <Check size={12} /> Concluído
+                        </button>
+                      )}
+
+                      {app.status === 'ready' && (
+                        <button
+                          onClick={() => handleUpdateStatus(app.id, 'completed')}
+                          className="btn-primary"
+                          style={{ padding: '4px 8px', fontSize: '0.75rem', background: '#084298', width: 'auto', height: '28px', boxShadow: 'none' }}
+                        >
+                          <Check size={12} /> Entregue
+                        </button>
+                      )}
+
+                      {app.status !== 'completed' && app.status !== 'canceled' && (
+                        <button
+                          onClick={() => handleUpdateStatus(app.id, 'canceled')}
+                          className="btn-secondary"
+                          style={{ padding: '4px 8px', fontSize: '0.75rem', color: '#842029', background: 'transparent', borderColor: 'rgba(132, 32, 41, 0.2)', width: 'auto', height: '28px' }}
+                        >
+                          <X size={12} /> Cancelar
+                        </button>
+                      )}
+                    </div>
+
+                    {!isPlanning && app.status !== 'completed' && app.status !== 'canceled' && (
+                      <button
+                        onClick={() => startPlanning(app)}
+                        className="btn-secondary"
+                        style={{ width: 'auto', padding: '4px 8px', fontSize: '0.75rem', height: '28px', borderColor: 'var(--gold-primary)', color: 'var(--gold-dark)', background: 'transparent' }}
+                      >
+                        Planejar
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
+  };
+
   const handleSignOut = async () => {
     await supabase.auth.signOut();
     onLogout();
@@ -571,6 +934,12 @@ export default function Dashboard({ onLogout }: DashboardProps) {
     return `${year}-${month}-${day}`;
   };
   const todayStr = getTodayLocalDateStr();
+
+  // Filtragem dos agendamentos ativos por etapa (4 colunas)
+  const pendingApps = activeApps.filter(app => app.status === 'pending');
+  const confirmedApps = activeApps.filter(app => app.status === 'confirmed' && !app.production_date);
+  const productionApps = activeApps.filter(app => app.status === 'confirmed' && app.production_date);
+  const readyApps = activeApps.filter(app => app.status === 'ready');
 
   return (
     <div className="dashboard-wrapper animate-fade-up">
@@ -665,414 +1034,171 @@ export default function Dashboard({ onLogout }: DashboardProps) {
 
       {/* ABA 1: AGENDA DE AGENDAMENTOS */}
       {activeTab === 'agenda' && (
-        <div className="dashboard-grid">
-          {/* Lado Esquerdo: Agenda de Clientes */}
-          <div>
-            <div className="card-lux" style={{ minHeight: '400px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px', flexWrap: 'wrap', gap: '12px' }}>
-                <h2 style={{ fontSize: '1.8rem', margin: 0, display: 'flex', alignItems: 'center', gap: '10px' }}>
-                  <Calendar style={{ color: 'var(--gold-primary)' }} />
-                  Seus Agendamentos
-                </h2>
-                
-                {/* Seletores Ativos vs Histórico */}
-                <div style={{ display: 'flex', gap: '8px' }}>
-                  <button
-                    type="button"
-                    onClick={() => setAgendaSubTab('ativos')}
-                    className={agendaSubTab === 'ativos' ? 'btn-primary' : 'btn-secondary'}
-                    style={{ width: 'auto', padding: '6px 16px', fontSize: '0.8rem', height: '36px' }}
-                  >
-                    Ativos ({activeApps.length})
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setAgendaSubTab('historico')}
-                    className={agendaSubTab === 'historico' ? 'btn-primary' : 'btn-secondary'}
-                    style={{ width: 'auto', padding: '6px 16px', fontSize: '0.8rem', height: '36px' }}
-                  >
-                    Histórico ({historyApps.length})
-                  </button>
-                </div>
-              </div>
-
-              {loading ? (
-                <p style={{ color: 'var(--text-muted)' }}>Carregando agenda...</p>
-              ) : displayedApps.length === 0 ? (
-                <p style={{ color: 'var(--text-muted)' }}>
-                  {agendaSubTab === 'ativos' 
-                    ? 'Nenhum agendamento ativo (pendente ou confirmado).' 
-                    : 'Nenhum agendamento concluído ou cancelado no histórico.'}
-                </p>
-              ) : (
-                <div className="appointment-list">
-                  {displayedApps.map((app) => {
-                    const isPlanning = planningAppId === app.id;
-                    const prodSlots = isPlanning ? getAvailableSlotsForDate(tempProdDate, 'production', app.id) : [];
-                    const delivSlots = isPlanning ? getAvailableSlotsForDate(tempDelivDate, 'delivery', app.id) : [];
-                    return (
-                      <div key={app.id} className="appointment-card animate-fade-in">
-                        {/* Header do Card */}
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '12px', marginBottom: '12px' }}>
-                          <div>
-                            <h3 style={{ fontSize: '1.25rem', margin: 0 }}>{app.client_name}</h3>
-                            <a 
-                              href={`https://wa.me/${app.client_phone.replace(/\D/g, '')}`} 
-                              target="_blank" 
-                              rel="noreferrer"
-                              style={{ 
-                                fontSize: '0.85rem', 
-                                color: 'var(--pink-primary)', 
-                                textDecoration: 'none', 
-                                display: 'flex', 
-                                alignItems: 'center', 
-                                gap: '4px',
-                                marginTop: '2px' 
-                              }}
-                            >
-                              <Phone size={12} />
-                              {app.client_phone}
-                            </a>
-                          </div>
-                          
-                          <span style={{ 
-                            fontSize: '0.75rem', 
-                            fontWeight: 600, 
-                            padding: '6px 12px', 
-                            borderRadius: '6px',
-                            textTransform: 'uppercase',
-                            background: 
-                              app.status === 'confirmed' ? 'var(--status-confirmed)' :
-                              app.status === 'completed' ? 'var(--status-completed)' :
-                              app.status === 'canceled' ? 'var(--status-canceled)' : 'var(--status-pending)',
-                            color: 
-                              app.status === 'confirmed' ? 'var(--status-confirmed-text)' :
-                              app.status === 'completed' ? 'var(--status-completed-text)' :
-                              app.status === 'canceled' ? 'var(--status-canceled-text)' : 'var(--status-pending-text)'
-                          }}>
-                            {app.status === 'pending' ? 'Pendente' :
-                             app.status === 'confirmed' ? 'Confirmado' :
-                             app.status === 'completed' ? 'Entregue' : 'Cancelado'}
-                          </span>
-                        </div>
-
-                        {/* Detalhes do Agendamento */}
-                        <div className="appointment-card-details" style={{ display: 'flex', gap: '16px', fontSize: '0.9rem', color: 'var(--text-muted)', marginBottom: '12px', borderBottom: '1px solid var(--border-color)', paddingBottom: '12px' }}>
-                          <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                            <Clock size={14} />
-                            {app.appointment_date.split('-').reverse().join('/')} às {app.appointment_time.slice(0,5)}
-                          </span>
-                          <span>
-                            <strong>Serviço:</strong> {app.service_type}
-                          </span>
-                          {app.estimated_price && (
-                            <span>
-                              <strong>Média:</strong> R$ {app.estimated_price}
-                            </span>
-                          )}
-                        </div>
-
-                        {/* Visualização do Planejamento Interno (Notas, Produção e Entrega) */}
-                        {!isPlanning && (
-                          <div style={{ fontSize: '0.9rem', marginBottom: '16px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                            {app.notes && (
-                              <div style={{ display: 'flex', gap: '6px', alignItems: 'flex-start', background: 'rgba(197, 168, 128, 0.08)', padding: '8px 12px', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
-                                <FileText size={16} style={{ color: 'var(--gold-dark)', marginTop: '2px', flexShrink: 0 }} />
-                                <span><strong>Detalhes:</strong> {app.notes}</span>
-                              </div>
-                            )}
-                            <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', color: 'var(--text-muted)' }}>
-                              {app.production_date && (
-                                <span>⚙️ <strong>Produção:</strong> {app.production_date.split('-').reverse().join('/')} {app.production_time ? `às ${app.production_time.slice(0, 5)}` : ''}</span>
-                              )}
-                              {app.delivery_date && (
-                                <span>📦 <strong>Entrega:</strong> {app.delivery_date.split('-').reverse().join('/')} {app.delivery_time ? `às ${app.delivery_time.slice(0, 5)}` : ''}</span>
-                              )}
-                            </div>
-                          </div>
-                        )}
-
-                        {/* Formulário de Planejamento Interno (Expandível) */}
-                        {isPlanning && (
-                          <div className="animate-fade-in" style={{ background: 'rgba(197, 168, 128, 0.05)', border: '1px solid var(--border-color)', borderRadius: '12px', padding: '16px', marginBottom: '16px' }}>
-                            <h4 style={{ fontSize: '1rem', fontWeight: 600, marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                              <Scissors size={14} />
-                              Planejamento Interno da Costureira
-                            </h4>
-
-                            {/* Notas do Serviço */}
-                            <div style={{ marginBottom: '12px' }}>
-                              <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, marginBottom: '4px' }}>Detalhes / Ajustes do Serviço</label>
-                              <textarea
-                                value={tempNotes}
-                                onChange={(e) => setTempNotes(e.target.value)}
-                                placeholder="Ex: Ajustar barra 3cm, trocar zíper por invisível..."
-                                className="input-lux"
-                                style={{ padding: '10px', height: '60px', resize: 'vertical', paddingLeft: '10px' }}
-                              />
-                            </div>
-
-                            {/* Data/Hora de Produção (Costura) */}
-                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '12px' }}>
-                              <div>
-                                <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, marginBottom: '4px' }}>⚙️ Data da Produção</label>
-                                <input
-                                  type="date"
-                                  value={tempProdDate}
-                                  onChange={(e) => {
-                                    const newDate = e.target.value;
-                                    setTempProdDate(newDate);
-                                    const slots = getAvailableSlotsForDate(newDate, 'production', app.id);
-                                    if (tempProdTime && !slots.includes(tempProdTime)) {
-                                      setTempProdTime('');
-                                    }
-                                  }}
-                                  className="input-lux"
-                                  style={{ padding: '8px', paddingLeft: '12px', fontSize: '0.85rem' }}
-                                />
-                              </div>
-                              <div>
-                                <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, marginBottom: '4px' }}>Hora da Produção</label>
-                                <select
-                                  value={tempProdTime}
-                                  onChange={(e) => setTempProdTime(e.target.value)}
-                                  className="input-lux"
-                                  disabled={!tempProdDate || prodSlots.length === 0}
-                                  style={{ padding: '8px', paddingLeft: '12px', fontSize: '0.85rem' }}
-                                >
-                                  {!tempProdDate ? (
-                                    <option value="">Selecione a data...</option>
-                                  ) : prodSlots.length === 0 ? (
-                                    <option value="">Sem horários livres</option>
-                                  ) : (
-                                    <>
-                                      <option value="">Selecione...</option>
-                                      {prodSlots.map(opt => (
-                                        <option key={`prod-${opt}`} value={opt}>{opt}</option>
-                                      ))}
-                                    </>
-                                  )}
-                                </select>
-                              </div>
-                            </div>
-
-                            {/* Data/Hora de Entrega (Retirada) */}
-                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '16px' }}>
-                              <div>
-                                <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, marginBottom: '4px' }}>📦 Data da Entrega</label>
-                                <input
-                                  type="date"
-                                  value={tempDelivDate}
-                                  onChange={(e) => {
-                                    const newDate = e.target.value;
-                                    setTempDelivDate(newDate);
-                                    const slots = getAvailableSlotsForDate(newDate, 'delivery', app.id);
-                                    if (tempDelivTime && !slots.includes(tempDelivTime)) {
-                                      setTempDelivTime('');
-                                    }
-                                  }}
-                                  className="input-lux"
-                                  style={{ padding: '8px', paddingLeft: '12px', fontSize: '0.85rem' }}
-                                />
-                              </div>
-                              <div>
-                                <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, marginBottom: '4px' }}>Hora da Entrega</label>
-                                <select
-                                  value={tempDelivTime}
-                                  onChange={(e) => setTempDelivTime(e.target.value)}
-                                  className="input-lux"
-                                  disabled={!tempDelivDate || delivSlots.length === 0}
-                                  style={{ padding: '8px', paddingLeft: '12px', fontSize: '0.85rem' }}
-                                >
-                                  {!tempDelivDate ? (
-                                    <option value="">Selecione a data...</option>
-                                  ) : delivSlots.length === 0 ? (
-                                    <option value="">Sem horários livres</option>
-                                  ) : (
-                                    <>
-                                      <option value="">Selecione...</option>
-                                      {delivSlots.map(opt => (
-                                        <option key={`deliv-${opt}`} value={opt}>{opt}</option>
-                                      ))}
-                                    </>
-                                  )}
-                                </select>
-                              </div>
-                            </div>
-
-                            {/* Botões de Ação do Planejamento */}
-                            <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
-                              <button 
-                                onClick={cancelEditService} // reutiliza cancel que limpa estados
-                                type="button"
-                                className="btn-secondary" 
-                                style={{ width: 'auto', padding: '6px 12px', fontSize: '0.8rem' }}
-                              >
-                                Cancelar
-                              </button>
-                              <button 
-                                onClick={() => handleSavePlanning(app.id)}
-                                disabled={isSavingPlanning}
-                                type="button"
-                                className="btn-primary" 
-                                style={{ width: 'auto', padding: '6px 12px', fontSize: '0.8rem' }}
-                              >
-                                {isSavingPlanning ? 'Salvando...' : 'Salvar Planejamento'}
-                              </button>
-                            </div>
-                          </div>
-                        )}
-
-                        {/* Ações do Card Principal */}
-                        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center' }}>
-                          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                            {app.status !== 'completed' && app.status !== 'canceled' && (
-                              <>
-                                {app.status === 'pending' && (
-                                  <button 
-                                    onClick={() => handleUpdateStatus(app.id, 'confirmed')}
-                                    className="btn-primary" 
-                                    style={{ padding: '8px 16px', fontSize: '0.85rem', display: 'inline-flex', width: 'auto', background: '#0f5132', boxShadow: 'none' }}
-                                  >
-                                    <Check size={14} />
-                                    Confirmar
-                                  </button>
-                                )}
-                                
-                                {app.status === 'confirmed' && (
-                                  <button 
-                                    onClick={() => handleUpdateStatus(app.id, 'completed')}
-                                    className="btn-primary" 
-                                    style={{ padding: '8px 16px', fontSize: '0.85rem', display: 'inline-flex', width: 'auto', background: 'var(--pink-primary)', boxShadow: 'none' }}
-                                  >
-                                    <Check size={14} />
-                                    Entregue
-                                  </button>
-                                )}
-
-                                <button 
-                                  onClick={() => handleUpdateStatus(app.id, 'canceled')}
-                                  className="btn-secondary" 
-                                  style={{ padding: '8px 16px', fontSize: '0.85rem', display: 'inline-flex', width: 'auto', color: '#842029', background: 'transparent', borderColor: 'rgba(132, 32, 41, 0.2)' }}
-                                >
-                                  <X size={14} />
-                                  Cancelar
-                                </button>
-                              </>
-                            )}
-                          </div>
-
-                          {!isPlanning && (
-                            <button 
-                              onClick={() => startPlanning(app)}
-                              className="btn-secondary"
-                              style={{ width: 'auto', padding: '8px 16px', fontSize: '0.85rem', borderColor: 'var(--gold-primary)', color: 'var(--gold-dark)', background: 'transparent' }}
-                            >
-                              Planejar Entrega
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Lado Direito: Bloqueio de Agenda */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
-            {/* Bloquear Horário */}
-            <div className="card-lux">
-              <h2 style={{ fontSize: '1.4rem', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <ShieldAlert style={{ color: 'var(--gold-primary)' }} />
-                Bloquear Agenda
-              </h2>
-              
-              <form onSubmit={handleCreateBlock}>
-                <div style={{ marginBottom: '12px' }}>
-                  <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '6px' }}>Data a bloquear</label>
-                  <input
-                    type="date"
-                    required
-                    value={blockDate}
-                    onChange={(e) => setBlockDate(e.target.value)}
-                    className="input-lux"
-                    style={{ paddingLeft: '12px' }}
-                  />
-                </div>
-
-                <div style={{ marginBottom: '20px' }}>
-                  <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '6px' }}>Motivo (opcional)</label>
-                  <input
-                    type="text"
-                    placeholder="Ex: Feriado, Consulta"
-                    value={blockReason}
-                    onChange={(e) => setBlockReason(e.target.value)}
-                    className="input-lux"
-                    style={{ paddingLeft: '12px' }}
-                  />
-                </div>
-
-                <button 
-                  type="submit" 
-                  disabled={isBlocking}
-                  className="btn-primary" 
-                  style={{ padding: '10px 0', fontSize: '0.9rem' }}
-                >
-                  {isBlocking ? 'Bloqueando...' : 'Confirmar Bloqueio'}
-                </button>
-              </form>
-            </div>
-
-            {/* Lista de Dias Bloqueados */}
-            <div className="card-lux" style={{ maxHeight: '320px', overflowY: 'auto' }}>
-              <h3 style={{ fontSize: '1.25rem', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                <Sliders size={18} />
-                Dias Bloqueados
-              </h3>
-              {blockedSlots.length === 0 ? (
-                <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Nenhuma data bloqueada.</p>
-              ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                  {blockedSlots.map((b) => (
-                    <div 
-                      key={b.id} 
-                      style={{ 
-                        background: 'rgba(255,255,255,0.4)', 
-                        border: '1px solid var(--border-color)',
-                        borderRadius: '8px',
-                        padding: '10px 12px',
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        alignItems: 'center',
-                        fontSize: '0.85rem'
-                      }}
+        <div>
+          {/* Layout Principal da Agenda */}
+          <div className={agendaSubTab === 'ativos' ? '' : 'dashboard-grid'}>
+            {/* Lado Esquerdo / Painel de Agendamentos */}
+            <div style={{ width: '100%', marginBottom: agendaSubTab === 'ativos' ? '24px' : 0 }}>
+              <div className="card-lux" style={{ minHeight: '400px', padding: agendaSubTab === 'ativos' ? '24px' : '40px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px', flexWrap: 'wrap', gap: '12px' }}>
+                  <h2 style={{ fontSize: '1.8rem', margin: 0, display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <Calendar style={{ color: 'var(--gold-primary)' }} />
+                    Seus Agendamentos
+                  </h2>
+                  
+                  {/* Seletores Ativos vs Histórico */}
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <button
+                      type="button"
+                      onClick={() => setAgendaSubTab('ativos')}
+                      className={agendaSubTab === 'ativos' ? 'btn-primary' : 'btn-secondary'}
+                      style={{ width: 'auto', padding: '6px 16px', fontSize: '0.8rem', height: '36px' }}
                     >
-                      <div>
-                        <strong>{b.blocked_date.split('-').reverse().join('/')}</strong>
-                        {b.reason && <p style={{ margin: 0, fontSize: '0.75rem', color: 'var(--text-muted)' }}>{b.reason}</p>}
-                      </div>
-                      <button 
-                        onClick={() => handleRemoveBlock(b.id)}
-                        style={{ 
-                          background: 'transparent', 
-                          border: 'none', 
-                          color: '#842029', 
-                          cursor: 'pointer',
-                          padding: '4px',
-                          display: 'flex',
-                          alignItems: 'center'
-                        }}
-                      >
-                        <Trash2 size={16} />
-                      </button>
-                    </div>
-                  ))}
+                      Ativos ({activeApps.length})
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setAgendaSubTab('historico')}
+                      className={agendaSubTab === 'historico' ? 'btn-primary' : 'btn-secondary'}
+                      style={{ width: 'auto', padding: '6px 16px', fontSize: '0.8rem', height: '36px' }}
+                    >
+                      Histórico ({historyApps.length})
+                    </button>
+                  </div>
                 </div>
-              )}
+
+                {loading ? (
+                  <p style={{ color: 'var(--text-muted)' }}>Carregando agenda...</p>
+                ) : displayedApps.length === 0 ? (
+                  <p style={{ color: 'var(--text-muted)' }}>
+                    {agendaSubTab === 'ativos' 
+                      ? 'Nenhum agendamento ativo (pendente, confirmado ou pronto).' 
+                      : 'Nenhum agendamento concluído ou cancelado no histórico.'}
+                  </p>
+                ) : agendaSubTab === 'historico' ? (
+                  // Lista do Histórico (Concluídos e Cancelados)
+                  <div className="appointment-list">
+                    {displayedApps.map((app) => {
+                      const isPlanning = planningAppId === app.id;
+                      return (
+                        <div key={app.id} className="appointment-card animate-fade-in">
+                          {/* Header do Card */}
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '12px', marginBottom: '12px' }}>
+                            <div>
+                              <h3 style={{ fontSize: '1.25rem', margin: 0 }}>{app.client_name}</h3>
+                              <a 
+                                href={`https://wa.me/${app.client_phone.replace(/\D/g, '')}`} 
+                                target="_blank" 
+                                rel="noreferrer"
+                                style={{ 
+                                  fontSize: '0.85rem', 
+                                  color: 'var(--pink-primary)', 
+                                  textDecoration: 'none', 
+                                  display: 'flex', 
+                                  alignItems: 'center', 
+                                  gap: '4px',
+                                  marginTop: '2px' 
+                                }}
+                              >
+                                <Phone size={12} />
+                                {app.client_phone}
+                              </a>
+                            </div>
+                            
+                            <span style={{ 
+                              fontSize: '0.75rem', 
+                              fontWeight: 600, 
+                              padding: '6px 12px', 
+                              borderRadius: '6px',
+                              textTransform: 'uppercase',
+                              background: 
+                                app.status === 'confirmed' ? 'var(--status-confirmed)' :
+                                app.status === 'ready' ? '#d1e7dd' :
+                                app.status === 'completed' ? 'var(--status-completed)' :
+                                app.status === 'canceled' ? 'var(--status-canceled)' : 'var(--status-pending)',
+                              color: 
+                                app.status === 'confirmed' ? 'var(--status-confirmed-text)' :
+                                app.status === 'ready' ? '#0f5132' :
+                                app.status === 'completed' ? 'var(--status-completed-text)' :
+                                app.status === 'canceled' ? 'var(--status-canceled-text)' : 'var(--status-pending-text)'
+                            }}>
+                              {app.status === 'pending' ? 'Pendente' :
+                               app.status === 'confirmed' ? 'Confirmado' :
+                               app.status === 'ready' ? 'Pronto' :
+                               app.status === 'completed' ? 'Entregue' : 'Cancelado'}
+                            </span>
+                          </div>
+
+                          {/* Detalhes do Agendamento */}
+                          <div className="appointment-card-details" style={{ display: 'flex', gap: '16px', fontSize: '0.9rem', color: 'var(--text-muted)', marginBottom: '12px', borderBottom: '1px solid var(--border-color)', paddingBottom: '12px' }}>
+                            <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                              <Clock size={14} />
+                              {app.appointment_date.split('-').reverse().join('/')} às {app.appointment_time.slice(0,5)}
+                            </span>
+                            <span>
+                              <strong>Serviço:</strong> {app.service_type}
+                            </span>
+                            {app.estimated_price && (
+                              <span>
+                                <strong>Média:</strong> R$ {app.estimated_price}
+                              </span>
+                            )}
+                          </div>
+
+                          {/* Visualização do Planejamento Interno */}
+                          {!isPlanning && (
+                            <div style={{ fontSize: '0.9rem', marginBottom: '16px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                              {app.notes && (
+                                <div style={{ display: 'flex', gap: '6px', alignItems: 'flex-start', background: 'rgba(197, 168, 128, 0.08)', padding: '8px 12px', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
+                                  <FileText size={16} style={{ color: 'var(--gold-dark)', marginTop: '2px', flexShrink: 0 }} />
+                                  <span><strong>Detalhes:</strong> {app.notes}</span>
+                                </div>
+                              )}
+                              <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', color: 'var(--text-muted)' }}>
+                                {app.production_date && (
+                                  <span>⚙️ <strong>Produção:</strong> {app.production_date.split('-').reverse().join('/')} {app.production_time ? `às ${app.production_time.slice(0, 5)}` : ''}</span>
+                                )}
+                                {app.delivery_date && (
+                                  <span>📦 <strong>Entrega:</strong> {app.delivery_date.split('-').reverse().join('/')} {app.delivery_time ? `às ${app.delivery_time.slice(0, 5)}` : ''}</span>
+                                )}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  // Painel Ativos Separado em 4 Colunas (Cards)
+                  <div style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
+                    gap: '20px',
+                    alignItems: 'start'
+                  }}>
+                    {renderAgendaColumn('Pendentes ⏳', pendingApps, 'var(--status-pending)', 'var(--status-pending-text)')}
+                    {renderAgendaColumn('Confirmados (Visitas) 📅', confirmedApps, 'var(--status-completed)', 'var(--status-completed-text)')}
+                    {renderAgendaColumn('Em Produção ⚙️', productionApps, 'rgba(176, 139, 83, 0.15)', 'var(--gold-dark)')}
+                    {renderAgendaColumn('Prontos para Entrega 📦', readyApps, 'var(--status-confirmed)', 'var(--status-confirmed-text)')}
+                  </div>
+                )}
+              </div>
             </div>
+
+            {/* Lado Direito: Bloqueio de Agenda (apenas para Histórico lateral) */}
+            {agendaSubTab === 'historico' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+                {renderBlockingCards()}
+              </div>
+            )}
           </div>
+
+          {/* Bloqueio de Agenda (para Ativos) - Renderizado abaixo das colunas */}
+          {agendaSubTab === 'ativos' && (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '24px', marginTop: '24px' }}>
+              {renderBlockingCards()}
+            </div>
+          )}
         </div>
       )}
 
@@ -1098,7 +1224,7 @@ export default function Dashboard({ onLogout }: DashboardProps) {
               </div>
               <div>
                 <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)', display: 'block', fontWeight: 500 }}>Visitas de Clientes</span>
-                <strong style={{ fontSize: '1.8rem', color: 'var(--pink-primary)', fontWeight: 600 }}>{appointments.filter(app => app.appointment_date === todayStr && app.status !== 'canceled').length}</strong>
+                <strong style={{ fontSize: '1.8rem', color: 'var(--pink-primary)', fontWeight: 600 }}>{appointments.filter(app => app.appointment_date === todayStr && app.status === 'confirmed').length}</strong>
               </div>
             </div>
 
@@ -1109,7 +1235,7 @@ export default function Dashboard({ onLogout }: DashboardProps) {
               </div>
               <div>
                 <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)', display: 'block', fontWeight: 500 }}>Costuras do Dia</span>
-                <strong style={{ fontSize: '1.8rem', color: 'var(--gold-dark)', fontWeight: 600 }}>{appointments.filter(app => app.production_date === todayStr && app.status !== 'canceled').length}</strong>
+                <strong style={{ fontSize: '1.8rem', color: 'var(--gold-dark)', fontWeight: 600 }}>{appointments.filter(app => app.production_date === todayStr && app.status === 'confirmed').length}</strong>
               </div>
             </div>
 
@@ -1120,7 +1246,7 @@ export default function Dashboard({ onLogout }: DashboardProps) {
               </div>
               <div>
                 <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)', display: 'block', fontWeight: 500 }}>Retiradas/Entregas</span>
-                <strong style={{ fontSize: '1.8rem', color: '#0f5132', fontWeight: 600 }}>{appointments.filter(app => app.delivery_date === todayStr && app.status !== 'canceled').length}</strong>
+                <strong style={{ fontSize: '1.8rem', color: '#0f5132', fontWeight: 600 }}>{appointments.filter(app => app.delivery_date === todayStr && (app.status === 'ready' || app.status === 'completed')).length}</strong>
               </div>
             </div>
 
@@ -1188,13 +1314,13 @@ export default function Dashboard({ onLogout }: DashboardProps) {
             <div className="card-lux" style={{ padding: '24px' }}>
               <h3 style={{ fontSize: '1.4rem', marginBottom: '20px', display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--gold-dark)' }}>
                 <Scissors size={20} />
-                Costuras do Dia ({appointments.filter(app => app.production_date === todayStr && app.status !== 'canceled').length})
+                Costuras do Dia ({appointments.filter(app => app.production_date === todayStr && app.status === 'confirmed').length})
               </h3>
-              {appointments.filter(app => app.production_date === todayStr && app.status !== 'canceled').length === 0 ? (
+              {appointments.filter(app => app.production_date === todayStr && app.status === 'confirmed').length === 0 ? (
                 <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', fontStyle: 'italic' }}>Nenhuma costura planejada para hoje.</p>
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                  {appointments.filter(app => app.production_date === todayStr && app.status !== 'canceled').map(app => (
+                  {appointments.filter(app => app.production_date === todayStr && app.status === 'confirmed').map(app => (
                     <div key={app.id} style={{ background: 'rgba(255, 255, 255, 0.5)', border: '1px solid var(--border-color)', borderRadius: '12px', padding: '16px' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
                         <div>
@@ -1206,10 +1332,10 @@ export default function Dashboard({ onLogout }: DashboardProps) {
                           fontWeight: 600, 
                           padding: '4px 8px', 
                           borderRadius: '4px',
-                          background: app.status === 'completed' ? 'var(--status-completed)' : 'var(--status-confirmed)',
-                          color: app.status === 'completed' ? 'var(--status-completed-text)' : 'var(--status-confirmed-text)'
+                          background: 'var(--status-confirmed)',
+                          color: 'var(--status-confirmed-text)'
                         }}>
-                          {app.status === 'completed' ? 'Entregue' : 'Confirmado'}
+                          Confirmado
                         </span>
                       </div>
                       <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
@@ -1230,13 +1356,13 @@ export default function Dashboard({ onLogout }: DashboardProps) {
             <div className="card-lux" style={{ padding: '24px' }}>
               <h3 style={{ fontSize: '1.4rem', marginBottom: '20px', display: 'flex', alignItems: 'center', gap: '8px', color: '#0f5132' }}>
                 <Clock size={20} />
-                Entregas do Dia ({appointments.filter(app => app.delivery_date === todayStr && app.status !== 'canceled').length})
+                Entregas do Dia ({appointments.filter(app => app.delivery_date === todayStr && (app.status === 'ready' || app.status === 'completed')).length})
               </h3>
-              {appointments.filter(app => app.delivery_date === todayStr && app.status !== 'canceled').length === 0 ? (
+              {appointments.filter(app => app.delivery_date === todayStr && (app.status === 'ready' || app.status === 'completed')).length === 0 ? (
                 <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', fontStyle: 'italic' }}>Nenhuma entrega planejada para hoje.</p>
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                  {appointments.filter(app => app.delivery_date === todayStr && app.status !== 'canceled').map(app => (
+                  {appointments.filter(app => app.delivery_date === todayStr && (app.status === 'ready' || app.status === 'completed')).map(app => (
                     <div key={app.id} style={{ background: 'rgba(255, 255, 255, 0.5)', border: '1px solid var(--border-color)', borderRadius: '12px', padding: '16px' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
                         <div>
@@ -1251,7 +1377,7 @@ export default function Dashboard({ onLogout }: DashboardProps) {
                           background: app.status === 'completed' ? 'var(--status-completed)' : 'var(--status-confirmed)',
                           color: app.status === 'completed' ? 'var(--status-completed-text)' : 'var(--status-confirmed-text)'
                         }}>
-                          {app.status === 'completed' ? 'Entregue' : 'Aguardando Retirada'}
+                          {app.status === 'completed' ? 'Entregue' : 'Pronto para Retirada'}
                         </span>
                       </div>
                       <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: app.status !== 'completed' ? '12px' : 0 }}>
