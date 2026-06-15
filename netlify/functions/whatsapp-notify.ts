@@ -27,14 +27,14 @@ export const handler: Handler = async (event) => {
     // Configurações do gateway de WhatsApp obtidas pelas variáveis de ambiente do Netlify
     const whatsappApiUrl = process.env.WHATSAPP_API_URL;
     const whatsappApiToken = process.env.WHATSAPP_API_TOKEN;
-    const recipientNumber = process.env.WHATSAPP_RECIPIENT_NUMBER; // Telefone da costureira
+    const recipientJid = process.env.WHATSAPP_JID || process.env.WHATSAPP_RECIPIENT_NUMBER;
 
-    if (!whatsappApiUrl || !recipientNumber) {
-      console.warn('Variáveis de WhatsApp essenciais não configuradas (URL ou número de destino).');
+    if (!whatsappApiUrl || !recipientJid) {
+      console.warn('Variáveis de WhatsApp essenciais não configuradas (URL ou JID do destinatário).');
       return {
         statusCode: 200,
         headers,
-        body: JSON.stringify({ message: 'Agendamento salvo, mas notificação pulada por falta de URL ou número de destino.' }),
+        body: JSON.stringify({ message: 'Agendamento salvo, mas notificação pulada por falta de URL ou JID.' }),
       };
     }
 
@@ -42,41 +42,20 @@ export const handler: Handler = async (event) => {
     const formattedDate = appointment_date.split('-').reverse().join('/');
     const formattedTime = appointment_time.slice(0, 5);
 
-    // Corpo da mensagem
-    const textMessage = `🧵 *Novo Agendamento Recebido!*\n\n` +
-      `👤 *Cliente*: ${client_name}\n` +
-      `📞 *Telefone*: ${client_phone}\n` +
-      `✂️ *Serviço*: ${service_type}\n` +
-      `💰 *Média Orçada*: R$ ${estimated_price}\n` +
-      `📅 *Data*: ${formattedDate} às ${formattedTime}\n\n` +
-      `👉 _Acesse o painel para gerenciar os compromissos do ateliê._`;
+    // Corpo da mensagem formatado conforme solicitado
+    const textMessage = `novo agendamento disponivel\n` +
+      `cliente: ${client_name}\n` +
+      `data: ${formattedDate} às ${formattedTime}\n` +
+      `valor estimado do orçamento: ${estimated_price}\n` +
+      `numero: ${client_phone}\n` +
+      `serviço: ${service_type}\n` +
+      `confirme o agendamento em:\n` +
+      `https://carelizatelie.netlify.app/admin`;
 
-    // Identifica o formato do payload com base na URL do gateway para evitar enviar
-    // propriedades misturadas, o que costuma causar erro "400 Bad Request" em APIs estritas.
-    let payload = {};
-    const lowerUrl = whatsappApiUrl.toLowerCase();
-
-    if (lowerUrl.includes('evolution') || lowerUrl.includes('sendtext') || lowerUrl.includes('send-text')) {
-      // Formato Evolution API / Z-API (sendText)
-      // Z-API usa 'phone'/'message' no endpoint send-text mas a Evolution usa 'number'/'text' no sendText
-      if (lowerUrl.includes('evolution')) {
-        payload = {
-          number: recipientNumber,
-          text: textMessage
-        };
-      } else {
-        payload = {
-          phone: recipientNumber,
-          message: textMessage
-        };
-      }
-    } else {
-      // Formato Padrão / Z-API (caso a URL não possua palavras específicas)
-      payload = {
-        phone: recipientNumber,
-        message: textMessage
-      };
-    }
+    const payload = {
+      jid: recipientJid,
+      text: textMessage
+    };
 
     // Monta os headers dinamicamente dependendo se o token foi fornecido
     const requestHeaders: Record<string, string> = {

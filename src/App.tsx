@@ -16,16 +16,22 @@ interface QualificationData {
 }
 
 export default function App() {
-  const [screen, setScreen] = useState<Screen>('qualify');
+  const [screen, setScreen] = useState<Screen>(() => {
+    return window.location.pathname === '/admin' ? 'login' : 'qualify';
+  });
   const [session, setSession] = useState<any>(null);
   const [qualificationData, setQualificationData] = useState<QualificationData | null>(null);
 
   // Verificar se o usuário já está autenticado no carregamento da página
   useEffect(() => {
+    const isLinkAdmin = window.location.pathname === '/admin';
+
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
       if (session) {
         setScreen('dashboard');
+      } else if (isLinkAdmin) {
+        setScreen('login');
       }
     });
 
@@ -34,11 +40,25 @@ export default function App() {
       if (session) {
         setScreen('dashboard');
       } else {
-        setScreen('qualify');
+        setScreen(window.location.pathname === '/admin' ? 'login' : 'qualify');
       }
     });
 
-    return () => subscription.unsubscribe();
+    const handlePopState = async () => {
+      const isLinkAdmin = window.location.pathname === '/admin';
+      if (isLinkAdmin) {
+        const { data: { session: currentSession } } = await supabase.auth.getSession();
+        setScreen(currentSession ? 'dashboard' : 'login');
+      } else {
+        setScreen('qualify');
+      }
+    };
+    window.addEventListener('popstate', handlePopState);
+
+    return () => {
+      subscription.unsubscribe();
+      window.removeEventListener('popstate', handlePopState);
+    };
   }, []);
 
   const handleQualified = (data: QualificationData) => {
@@ -46,16 +66,15 @@ export default function App() {
     setScreen('scheduler');
   };
 
-  const handleLogout = () => {
-    setScreen('qualify');
-  };
-
   return (
     <main style={{ minHeight: '100vh', paddingBottom: '60px' }}>
       {screen === 'qualify' && (
         <QualifyForm 
           onQualified={handleQualified} 
-          onNavigateToLogin={() => setScreen(session ? 'dashboard' : 'login')} 
+          onNavigateToLogin={() => {
+            window.history.pushState({}, '', '/admin');
+            setScreen(session ? 'dashboard' : 'login');
+          }} 
         />
       )}
 
@@ -69,12 +88,18 @@ export default function App() {
       {screen === 'login' && (
         <Login 
           onLoginSuccess={() => setScreen('dashboard')} 
-          onBack={() => setScreen('qualify')} 
+          onBack={() => {
+            window.history.pushState({}, '', '/');
+            setScreen('qualify');
+          }} 
         />
       )}
 
       {screen === 'dashboard' && (
-        <Dashboard onLogout={handleLogout} />
+        <Dashboard onLogout={() => {
+          window.history.pushState({}, '', '/');
+          setScreen('qualify');
+        }} />
       )}
     </main>
   );
