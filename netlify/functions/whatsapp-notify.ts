@@ -22,7 +22,16 @@ export const handler: Handler = async (event) => {
 
   try {
     const body = JSON.parse(event.body || '{}');
-    const { client_name, client_phone, service_type, estimated_price, appointment_date, appointment_time } = body;
+    const { 
+      client_name, 
+      client_phone, 
+      service_type, 
+      estimated_price, 
+      appointment_date, 
+      appointment_time,
+      custom_jid,
+      custom_text
+    } = body;
 
     // Configurações do gateway de WhatsApp obtidas pelas variáveis de ambiente do Netlify
     const whatsappApiUrl = process.env.WHATSAPP_API_URL;
@@ -38,22 +47,34 @@ export const handler: Handler = async (event) => {
       };
     }
 
-    // Formatação da data para o padrão brasileiro
-    const formattedDate = appointment_date.split('-').reverse().join('/');
-    const formattedTime = appointment_time.slice(0, 5);
+    let targetJid = recipientJid;
+    let textMessage = '';
 
-    // Corpo da mensagem formatado conforme solicitado
-    const textMessage = `novo agendamento disponivel\n` +
-      `cliente: ${client_name}\n` +
-      `data: ${formattedDate} às ${formattedTime}\n` +
-      `valor estimado do orçamento: ${estimated_price}\n` +
-      `numero: ${client_phone}\n` +
-      `serviço: ${service_type}\n` +
-      `confirme o agendamento em:\n` +
-      `https://carelizatelie.netlify.app/admin`;
+    if (custom_jid && custom_text) {
+      targetJid = custom_jid;
+      // Se o JID padrão do servidor usar o sufixo @s.whatsapp.net, garante que o customizado também use se for apenas números
+      if (recipientJid.endsWith('@s.whatsapp.net') && !targetJid.includes('@')) {
+        targetJid = `${targetJid}@s.whatsapp.net`;
+      }
+      textMessage = custom_text;
+    } else {
+      // Formatação da data para o padrão brasileiro
+      const formattedDate = appointment_date.split('-').reverse().join('/');
+      const formattedTime = appointment_time.slice(0, 5);
+
+      // Corpo da mensagem formatado conforme solicitado
+      textMessage = `novo agendamento disponivel\n` +
+        `cliente: ${client_name}\n` +
+        `data: ${formattedDate} às ${formattedTime}\n` +
+        `valor estimado do orçamento: ${estimated_price}\n` +
+        `numero: ${client_phone}\n` +
+        `serviço: ${service_type}\n` +
+        `confirme o agendamento em:\n` +
+        `https://carelizatelie.netlify.app/admin`;
+    }
 
     const payload = {
-      jid: recipientJid,
+      jid: targetJid,
       text: textMessage
     };
 

@@ -1,6 +1,6 @@
 import { useState, useEffect, type FormEvent } from 'react';
 import { supabase } from '../lib/supabase';
-import { LogOut, Calendar, Clock, Check, X, ShieldAlert, Trash2, Sliders, Phone, Scissors, Plus, Edit2, Save, Settings, FileText } from 'lucide-react';
+import { LogOut, Calendar, Clock, Check, X, ShieldAlert, Trash2, Sliders, Phone, Scissors, Plus, Edit2, Save, Settings, FileText, Bell, AlertCircle } from 'lucide-react';
 
 interface Appointment {
   id: string;
@@ -61,9 +61,9 @@ const minutesToTime = (minutes: number): string => {
 };
 
 export default function Dashboard({ onLogout }: DashboardProps) {
-  const [activeTab, setActiveTab] = useState<'agenda' | 'servicos' | 'horarios'>(() => {
+  const [activeTab, setActiveTab] = useState<'agenda' | 'notificacoes' | 'servicos' | 'horarios'>(() => {
     const saved = localStorage.getItem('adminActiveTab');
-    return (saved as 'agenda' | 'servicos' | 'horarios') || 'agenda';
+    return (saved as 'agenda' | 'notificacoes' | 'servicos' | 'horarios') || 'agenda';
   });
 
   useEffect(() => {
@@ -76,6 +76,31 @@ export default function Dashboard({ onLogout }: DashboardProps) {
   const [blockDate, setBlockDate] = useState('');
   const [blockReason, setBlockReason] = useState('');
   const [isBlocking, setIsBlocking] = useState(false);
+
+  // Sub-abas da Agenda (Ativos vs Histórico)
+  const [agendaSubTab, setAgendaSubTab] = useState<'ativos' | 'historico'>('ativos');
+
+  // Ordena agendamentos ativos (Pendentes primeiro, depois Confirmados por ordem cronológica)
+  const getSortedActiveAppointments = (apps: Appointment[]) => {
+    const active = apps.filter(app => app.status === 'pending' || app.status === 'confirmed');
+    return active.sort((a, b) => {
+      if (a.status === 'pending' && b.status !== 'pending') return -1;
+      if (a.status !== 'pending' && b.status === 'pending') return 1;
+      const dateA = new Date(`${a.appointment_date}T${a.appointment_time}`);
+      const dateB = new Date(`${b.appointment_date}T${b.appointment_time}`);
+      return dateA.getTime() - dateB.getTime();
+    });
+  };
+
+  // Ordena histórico de agendamentos (Entregues/Cancelados, do mais recente para o mais antigo)
+  const getSortedHistoryAppointments = (apps: Appointment[]) => {
+    const history = apps.filter(app => app.status === 'completed' || app.status === 'canceled');
+    return history.sort((a, b) => {
+      const dateA = new Date(`${a.appointment_date}T${a.appointment_time}`);
+      const dateB = new Date(`${b.appointment_date}T${b.appointment_time}`);
+      return dateB.getTime() - dateA.getTime();
+    });
+  };
 
   // Estados de Planejamento Interno (Notas, Produção e Entrega) por agendamento
   const [planningAppId, setPlanningAppId] = useState<string | null>(null);
@@ -249,6 +274,45 @@ export default function Dashboard({ onLogout }: DashboardProps) {
     }
   }
 
+  // Disparar confirmação para o cliente via WhatsApp ao aprovar agendamento
+  const sendConfirmationWhatsApp = async (app: Appointment) => {
+    try {
+      const formattedDate = app.appointment_date.split('-').reverse().join('/');
+      const formattedTime = app.appointment_time.slice(0, 5);
+
+      const clientMessage = `Olá, *${app.client_name}*!\n\n` +
+        `Seu agendamento para o serviço *${app.service_type}* no *Careliz Ateliê* foi confirmado com sucesso!\n\n` +
+        `📅 *Data*: ${formattedDate}\n` +
+        `⏰ *Horário*: ${formattedTime}\n\n` +
+        `Te aguardamos no horário combinado! Caso precise reagendar, entre em contato conosco.`;
+
+      // Formatar número do cliente (garantir código de país 55)
+      let cleanedPhone = app.client_phone.replace(/\D/g, '');
+      if (!cleanedPhone.startsWith('55') && cleanedPhone.length >= 10) {
+        cleanedPhone = '55' + cleanedPhone;
+      }
+
+      fetch('/.netlify/functions/whatsapp-notify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          client_name: app.client_name,
+          client_phone: app.client_phone,
+          service_type: app.service_type,
+          estimated_price: app.estimated_price ? String(app.estimated_price) : '',
+          appointment_date: app.appointment_date,
+          appointment_time: app.appointment_time,
+          custom_jid: cleanedPhone,
+          custom_text: clientMessage
+        })
+      }).catch(err => console.error('Erro assíncrono ao notificar cliente:', err));
+
+      console.log('Mensagem de confirmação enviada ao cliente com sucesso!');
+    } catch (err) {
+      console.error('Erro ao enviar confirmação de WhatsApp ao cliente:', err);
+    }
+  };
+
   // Alterar o status do agendamento
   const handleUpdateStatus = async (id: string, newStatus: Appointment['status']) => {
     try {
@@ -262,6 +326,14 @@ export default function Dashboard({ onLogout }: DashboardProps) {
       setAppointments(prev => 
         prev.map(app => app.id === id ? { ...app, status: newStatus } : app)
       );
+
+      // Se for confirmado, dispara notificação ao cliente
+      if (newStatus === 'confirmed') {
+        const app = appointments.find(a => a.id === id);
+        if (app) {
+          sendConfirmationWhatsApp(app);
+        }
+      }
     } catch (err) {
       console.error('Erro ao atualizar status:', err);
       alert('Não foi possível atualizar o agendamento.');
@@ -485,6 +557,21 @@ export default function Dashboard({ onLogout }: DashboardProps) {
     onLogout();
   };
 
+  const activeApps = getSortedActiveAppointments(appointments);
+  const historyApps = getSortedHistoryAppointments(appointments);
+  const displayedApps = agendaSubTab === 'ativos' ? activeApps : historyApps;
+  const pendingCount = appointments.filter(app => app.status === 'pending').length;
+
+  // Obter data de hoje em formato YYYY-MM-DD no timezone local
+  const getTodayLocalDateStr = () => {
+    const d = new Date();
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+  const todayStr = getTodayLocalDateStr();
+
   return (
     <div className="dashboard-wrapper animate-fade-up">
       {/* Header */}
@@ -535,6 +622,30 @@ export default function Dashboard({ onLogout }: DashboardProps) {
           Ver Agenda
         </button>
         <button 
+          onClick={() => setActiveTab('notificacoes')}
+          className={activeTab === 'notificacoes' ? 'btn-primary' : 'btn-secondary'}
+          style={{ width: 'auto', padding: '10px 20px', fontSize: '0.9rem', position: 'relative' }}
+        >
+          <Bell size={16} />
+          Notificações
+          {pendingCount > 0 && (
+            <span style={{ 
+              position: 'absolute', 
+              top: '-6px', 
+              right: '-6px', 
+              background: 'var(--pink-primary)', 
+              color: 'white', 
+              borderRadius: '50%', 
+              padding: '2px 6px', 
+              fontSize: '0.7rem', 
+              fontWeight: 'bold',
+              boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+            }}>
+              {pendingCount}
+            </span>
+          )}
+        </button>
+        <button 
           onClick={() => setActiveTab('servicos')}
           className={activeTab === 'servicos' ? 'btn-primary' : 'btn-secondary'}
           style={{ width: 'auto', padding: '10px 20px', fontSize: '0.9rem' }}
@@ -558,18 +669,44 @@ export default function Dashboard({ onLogout }: DashboardProps) {
           {/* Lado Esquerdo: Agenda de Clientes */}
           <div>
             <div className="card-lux" style={{ minHeight: '400px' }}>
-              <h2 style={{ fontSize: '1.8rem', marginBottom: '24px', display: 'flex', alignItems: 'center', gap: '10px' }}>
-                <Calendar style={{ color: 'var(--gold-primary)' }} />
-                Seus Agendamentos
-              </h2>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px', flexWrap: 'wrap', gap: '12px' }}>
+                <h2 style={{ fontSize: '1.8rem', margin: 0, display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <Calendar style={{ color: 'var(--gold-primary)' }} />
+                  Seus Agendamentos
+                </h2>
+                
+                {/* Seletores Ativos vs Histórico */}
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <button
+                    type="button"
+                    onClick={() => setAgendaSubTab('ativos')}
+                    className={agendaSubTab === 'ativos' ? 'btn-primary' : 'btn-secondary'}
+                    style={{ width: 'auto', padding: '6px 16px', fontSize: '0.8rem', height: '36px' }}
+                  >
+                    Ativos ({activeApps.length})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setAgendaSubTab('historico')}
+                    className={agendaSubTab === 'historico' ? 'btn-primary' : 'btn-secondary'}
+                    style={{ width: 'auto', padding: '6px 16px', fontSize: '0.8rem', height: '36px' }}
+                  >
+                    Histórico ({historyApps.length})
+                  </button>
+                </div>
+              </div>
 
               {loading ? (
                 <p style={{ color: 'var(--text-muted)' }}>Carregando agenda...</p>
-              ) : appointments.length === 0 ? (
-                <p style={{ color: 'var(--text-muted)' }}>Nenhum agendamento registrado até o momento.</p>
+              ) : displayedApps.length === 0 ? (
+                <p style={{ color: 'var(--text-muted)' }}>
+                  {agendaSubTab === 'ativos' 
+                    ? 'Nenhum agendamento ativo (pendente ou confirmado).' 
+                    : 'Nenhum agendamento concluído ou cancelado no histórico.'}
+                </p>
               ) : (
                 <div className="appointment-list">
-                  {appointments.map((app) => {
+                  {displayedApps.map((app) => {
                     const isPlanning = planningAppId === app.id;
                     const prodSlots = isPlanning ? getAvailableSlotsForDate(tempProdDate, 'production', app.id) : [];
                     const delivSlots = isPlanning ? getAvailableSlotsForDate(tempDelivDate, 'delivery', app.id) : [];
@@ -930,6 +1067,205 @@ export default function Dashboard({ onLogout }: DashboardProps) {
                       >
                         <Trash2 size={16} />
                       </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ABA 1.5: NOTIFICAÇÕES (DASHBOARD DIÁRIO) */}
+      {activeTab === 'notificacoes' && (
+        <div className="animate-fade-in" style={{ width: '100%' }}>
+          {/* Saudação e Data */}
+          <div className="card-lux" style={{ marginBottom: '24px', padding: '30px' }}>
+            <h2 style={{ fontSize: '2rem', display: 'flex', alignItems: 'center', gap: '12px', margin: 0 }}>
+              <span>Olá, Carolina! ☀️</span>
+            </h2>
+            <p style={{ color: 'var(--text-muted)', marginTop: '8px', fontSize: '1.1rem' }}>
+              Aqui está o seu painel de resumo para hoje, <strong>{new Date().toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</strong>.
+            </p>
+          </div>
+
+          {/* Grid de Estatísticas Rápidas */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '16px', marginBottom: '32px' }}>
+            {/* Agendamentos */}
+            <div className="card-lux" style={{ padding: '20px', display: 'flex', alignItems: 'center', gap: '16px', background: 'var(--pink-light)', border: '1px solid rgba(209, 138, 153, 0.3)' }}>
+              <div style={{ background: 'var(--pink-primary)', color: 'white', borderRadius: '12px', padding: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <Calendar size={24} />
+              </div>
+              <div>
+                <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)', display: 'block', fontWeight: 500 }}>Visitas de Clientes</span>
+                <strong style={{ fontSize: '1.8rem', color: 'var(--pink-primary)', fontWeight: 600 }}>{appointments.filter(app => app.appointment_date === todayStr && app.status !== 'canceled').length}</strong>
+              </div>
+            </div>
+
+            {/* Produção */}
+            <div className="card-lux" style={{ padding: '20px', display: 'flex', alignItems: 'center', gap: '16px', background: 'rgba(176, 139, 83, 0.08)' }}>
+              <div style={{ background: 'var(--gold-primary)', color: 'white', borderRadius: '12px', padding: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <Scissors size={24} />
+              </div>
+              <div>
+                <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)', display: 'block', fontWeight: 500 }}>Costuras do Dia</span>
+                <strong style={{ fontSize: '1.8rem', color: 'var(--gold-dark)', fontWeight: 600 }}>{appointments.filter(app => app.production_date === todayStr && app.status !== 'canceled').length}</strong>
+              </div>
+            </div>
+
+            {/* Entregas */}
+            <div className="card-lux" style={{ padding: '20px', display: 'flex', alignItems: 'center', gap: '16px', background: 'rgba(15, 81, 50, 0.05)', border: '1px solid rgba(15, 81, 50, 0.15)' }}>
+              <div style={{ background: '#0f5132', color: 'white', borderRadius: '12px', padding: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <Clock size={24} />
+              </div>
+              <div>
+                <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)', display: 'block', fontWeight: 500 }}>Retiradas/Entregas</span>
+                <strong style={{ fontSize: '1.8rem', color: '#0f5132', fontWeight: 600 }}>{appointments.filter(app => app.delivery_date === todayStr && app.status !== 'canceled').length}</strong>
+              </div>
+            </div>
+
+            {/* Pendentes */}
+            <div className="card-lux" style={{ padding: '20px', display: 'flex', alignItems: 'center', gap: '16px', background: 'rgba(102, 77, 3, 0.05)', border: '1px solid rgba(102, 77, 3, 0.15)' }}>
+              <div style={{ background: '#664d03', color: 'white', borderRadius: '12px', padding: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <AlertCircle size={24} />
+              </div>
+              <div>
+                <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)', display: 'block', fontWeight: 500 }}>Novas Solicitações</span>
+                <strong style={{ fontSize: '1.8rem', color: '#664d03', fontWeight: 600 }}>{pendingCount}</strong>
+              </div>
+            </div>
+          </div>
+
+          {/* Detalhes Diários organizados em 3 áreas */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '24px' }}>
+            {/* Bloco 1: Solicitações Pendentes */}
+            <div className="card-lux" style={{ padding: '24px' }}>
+              <h3 style={{ fontSize: '1.4rem', marginBottom: '20px', display: 'flex', alignItems: 'center', gap: '8px', color: '#664d03' }}>
+                <AlertCircle size={20} />
+                Novos Agendamentos ({pendingCount})
+              </h3>
+              {appointments.filter(app => app.status === 'pending').length === 0 ? (
+                <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', fontStyle: 'italic' }}>Nenhuma solicitação pendente.</p>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                  {appointments.filter(app => app.status === 'pending').map(app => (
+                    <div key={app.id} style={{ background: 'rgba(255, 255, 255, 0.5)', border: '1px solid var(--border-color)', borderRadius: '12px', padding: '16px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
+                        <div>
+                          <strong style={{ display: 'block', fontSize: '1.05rem' }}>{app.client_name}</strong>
+                          <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{app.client_phone}</span>
+                        </div>
+                        <span style={{ fontSize: '0.75rem', fontWeight: 600, background: 'var(--status-pending)', color: 'var(--status-pending-text)', padding: '4px 8px', borderRadius: '4px' }}>Novo</span>
+                      </div>
+                      <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '12px' }}>
+                        <div><strong>Data:</strong> {app.appointment_date.split('-').reverse().join('/')} às {app.appointment_time.slice(0, 5)}</div>
+                        <div><strong>Serviço:</strong> {app.service_type}</div>
+                        {app.estimated_price && <div><strong>Média:</strong> R$ {app.estimated_price}</div>}
+                      </div>
+                      <div style={{ display: 'flex', gap: '8px' }}>
+                        <button
+                          onClick={() => handleUpdateStatus(app.id, 'confirmed')}
+                          className="btn-primary"
+                          style={{ padding: '6px 12px', fontSize: '0.8rem', background: '#0f5132', height: '32px', width: 'auto', flex: 1, boxShadow: 'none' }}
+                        >
+                          <Check size={12} /> Confirmar
+                        </button>
+                        <button
+                          onClick={() => handleUpdateStatus(app.id, 'canceled')}
+                          className="btn-secondary"
+                          style={{ padding: '6px 12px', fontSize: '0.8rem', color: '#842029', background: 'transparent', borderColor: 'rgba(132, 32, 41, 0.2)', height: '32px', width: 'auto', flex: 1 }}
+                        >
+                          <X size={12} /> Recusar
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Bloco 2: Costuras do Dia */}
+            <div className="card-lux" style={{ padding: '24px' }}>
+              <h3 style={{ fontSize: '1.4rem', marginBottom: '20px', display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--gold-dark)' }}>
+                <Scissors size={20} />
+                Costuras do Dia ({appointments.filter(app => app.production_date === todayStr && app.status !== 'canceled').length})
+              </h3>
+              {appointments.filter(app => app.production_date === todayStr && app.status !== 'canceled').length === 0 ? (
+                <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', fontStyle: 'italic' }}>Nenhuma costura planejada para hoje.</p>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                  {appointments.filter(app => app.production_date === todayStr && app.status !== 'canceled').map(app => (
+                    <div key={app.id} style={{ background: 'rgba(255, 255, 255, 0.5)', border: '1px solid var(--border-color)', borderRadius: '12px', padding: '16px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
+                        <div>
+                          <strong style={{ display: 'block', fontSize: '1.05rem' }}>{app.client_name}</strong>
+                          <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Horário: {app.production_time ? app.production_time.slice(0, 5) : 'Sem horário'}</span>
+                        </div>
+                        <span style={{ 
+                          fontSize: '0.75rem', 
+                          fontWeight: 600, 
+                          padding: '4px 8px', 
+                          borderRadius: '4px',
+                          background: app.status === 'completed' ? 'var(--status-completed)' : 'var(--status-confirmed)',
+                          color: app.status === 'completed' ? 'var(--status-completed-text)' : 'var(--status-confirmed-text)'
+                        }}>
+                          {app.status === 'completed' ? 'Entregue' : 'Confirmado'}
+                        </span>
+                      </div>
+                      <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+                        <div><strong>Peça/Serviço:</strong> {app.service_type}</div>
+                        {app.notes && (
+                          <div style={{ background: 'rgba(176, 139, 83, 0.06)', border: '1px solid rgba(176, 139, 83, 0.2)', borderRadius: '8px', padding: '8px', marginTop: '8px', fontStyle: 'italic' }}>
+                            💡 {app.notes}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Bloco 3: Entregas do Dia */}
+            <div className="card-lux" style={{ padding: '24px' }}>
+              <h3 style={{ fontSize: '1.4rem', marginBottom: '20px', display: 'flex', alignItems: 'center', gap: '8px', color: '#0f5132' }}>
+                <Clock size={20} />
+                Entregas do Dia ({appointments.filter(app => app.delivery_date === todayStr && app.status !== 'canceled').length})
+              </h3>
+              {appointments.filter(app => app.delivery_date === todayStr && app.status !== 'canceled').length === 0 ? (
+                <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', fontStyle: 'italic' }}>Nenhuma entrega planejada para hoje.</p>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                  {appointments.filter(app => app.delivery_date === todayStr && app.status !== 'canceled').map(app => (
+                    <div key={app.id} style={{ background: 'rgba(255, 255, 255, 0.5)', border: '1px solid var(--border-color)', borderRadius: '12px', padding: '16px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
+                        <div>
+                          <strong style={{ display: 'block', fontSize: '1.05rem' }}>{app.client_name}</strong>
+                          <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Horário: {app.delivery_time ? app.delivery_time.slice(0, 5) : 'Sem horário'}</span>
+                        </div>
+                        <span style={{ 
+                          fontSize: '0.75rem', 
+                          fontWeight: 600, 
+                          padding: '4px 8px', 
+                          borderRadius: '4px',
+                          background: app.status === 'completed' ? 'var(--status-completed)' : 'var(--status-confirmed)',
+                          color: app.status === 'completed' ? 'var(--status-completed-text)' : 'var(--status-confirmed-text)'
+                        }}>
+                          {app.status === 'completed' ? 'Entregue' : 'Aguardando Retirada'}
+                        </span>
+                      </div>
+                      <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: app.status !== 'completed' ? '12px' : 0 }}>
+                        <div><strong>Peça/Serviço:</strong> {app.service_type}</div>
+                      </div>
+                      {app.status !== 'completed' && (
+                        <button
+                          onClick={() => handleUpdateStatus(app.id, 'completed')}
+                          className="btn-primary"
+                          style={{ padding: '6px 12px', fontSize: '0.8rem', background: 'var(--pink-primary)', height: '32px', width: 'auto', display: 'flex', gap: '4px', boxShadow: 'none' }}
+                        >
+                          <Check size={12} /> Marcar como Entregue
+                        </button>
+                      )}
                     </div>
                   ))}
                 </div>
