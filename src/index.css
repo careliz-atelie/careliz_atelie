@@ -311,6 +311,62 @@ p {
   box-shadow: 0 8px 24px rgba(44, 31, 31, 0.04);
 }
 
+.weekly-day-card {
+  background: rgba(255, 255, 255, 0.4); 
+  border: 1px solid var(--border-color); 
+  border-radius: 16px;
+  padding: 20px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 20px;
+}
+
+.weekly-day-card-day {
+  flex: 1 0 160px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.weekly-day-card-time {
+  flex: 1 0 220px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.weekly-day-card-status {
+  flex: 0 0 auto;
+  min-width: 80px;
+  font-size: 0.85rem;
+  color: var(--pink-primary);
+  font-weight: 600;
+  text-align: center;
+}
+
+.input-time-lux {
+  width: 90px;
+  min-width: 90px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-color);
+  background: rgba(255, 255, 255, 0.5);
+  color: var(--text-main);
+  font-family: 'Outfit', sans-serif;
+  font-size: 0.9rem;
+  outline: none;
+  text-align: center;
+  transition: all 0.25s ease;
+}
+
+.input-time-lux:focus {
+  border-color: var(--border-focus);
+  background: #FFFFFF;
+  box-shadow: 0 0 0 3px rgba(209, 138, 153, 0.12);
+}
+
+
 /* ==========================================
    RESPONSIVIDADE (MOBILE-FIRST ADAPTATIONS)
    ========================================== */
@@ -356,6 +412,22 @@ p {
   .appointment-card-details {
     flex-wrap: wrap;
     gap: 8px !important;
+  }
+
+  .weekly-day-card {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 16px;
+    width: 100%;
+  }
+
+  .weekly-day-card > div,
+  .weekly-day-card-day,
+  .weekly-day-card-time,
+  .weekly-day-card-status {
+    width: 100% !important;
+    flex: 1 1 100% !important;
   }
 }
 
